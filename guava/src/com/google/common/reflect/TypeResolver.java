@@ -23,14 +23,18 @@ import com.google.common.annotations.Beta;
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
@@ -129,13 +133,66 @@ public final class TypeResolver {
     new TypeVisitor() {
       @Override
       void visitTypeVariable(TypeVariable<?> typeVariable) {
+        Type[] bounds = typeVariable.getBounds();
+        if (bounds.length > 0 && !(bounds.length == 1 && bounds[0].equals(Object.class))) {
+          //
+          // Confirm that `to` can conform to the bounds of `typeVariable`.
+          //
+          // First, resolve any known type variables in the bounds, including
+          // this type variable.  (This type variable may appear within its own
+          // bounds, as in <T extends Comparable<? super T>>.)
+          //
+          Map<TypeVariableKey, Type> map = new LinkedHashMap<>(mappings);
+          map.put(new TypeVariableKey(typeVariable), to);
+          TypeTable typeTable = new TypeTable(ImmutableMap.copyOf(map));
+          TypeResolver resolver = new TypeResolver(typeTable);
+          Type[] resolvedBounds = resolver.resolveTypes(bounds);
+          //
+          // If there are any remaining type variables in the bounds, then
+          // resolve those type variables in the most permissive way possible.
+          // For example, if one of the bounds is
+          //
+          //   List<? extends U>, where U extends Comparable<? super U>
+          //
+          // then resolve that bound to
+          //
+          //   List<? extends Comparable<?>>
+          //
+          Type[] mostPermissiveBounds = resolvePermissively(resolvedBounds, ImmutableSet.of());
+          TypeToken<?> specifiedType = TypeToken.of(to).wrap();
+          for (int i = 0; i < bounds.length; i++) {
+            // TODO: Is this handling `to=?` correctly? (Unbounded wildcard type)
+            checkArgument(
+                specifiedType.isSubtypeOf(mostPermissiveBounds[i]),
+                "Incompatible type for variable %s: "
+                    + "specified type %s is not a subtype of bound %s, "
+                    + "which was resolved using known type variable mappings to %s, "
+                    + "which then had its remaining type variables resolved "
+                    + "in the most permissive way possible to produce %s",
+                typeVariable.getTypeName(),
+                to.getTypeName(),
+                bounds[i].getTypeName(),
+                resolvedBounds[i].getTypeName(),
+                mostPermissiveBounds[i].getTypeName());
+          }
+        }
         mappings.put(new TypeVariableKey(typeVariable), to);
       }
 
       @Override
       void visitWildcardType(WildcardType fromWildcardType) {
         if (!(to instanceof WildcardType)) {
-          return; // okay to say <?> is anything
+          for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
+            if (!(fromUpperBound instanceof Class)) {
+              populateTypeMappings(mappings, fromUpperBound, to);
+            }
+          }
+          for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
+            if (!(fromLowerBound instanceof Class)) {
+              populateTypeMappings(mappings, fromLowerBound, to);
+            }
+          }
+          return;
         }
         WildcardType toWildcardType = (WildcardType) to;
         Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
@@ -161,6 +218,10 @@ public final class TypeResolver {
         if (to instanceof WildcardType) {
           return; // Okay to say Foo<A> is <?>
         }
+        if (to instanceof Class && fromParameterizedType.getRawType().equals(Class.class)) {
+          populateTypeMappings(mappings, fromParameterizedType.getActualTypeArguments()[0], to);
+          return;
+        }
         ParameterizedType toParameterizedType = expectArgument(ParameterizedType.class, to);
         if (fromParameterizedType.getOwnerType() != null
             && toParameterizedType.getOwnerType() != null) {
@@ -168,7 +229,7 @@ public final class TypeResolver {
               mappings, fromParameterizedType.getOwnerType(), toParameterizedType.getOwnerType());
         }
         checkArgument(
-            fromParameterizedType.getRawType().equals(toParameterizedType.getRawType()),
+            ((Class<?>) fromParameterizedType.getRawType()).isAssignableFrom((Class<?>) toParameterizedType.getRawType()),
             "Inconsistent raw type: %s vs. %s",
             fromParameterizedType,
             to);
@@ -273,6 +334,77 @@ public final class TypeResolver {
     }
   }
 
+  private static Type[] resolvePermissively(Type[] types, Set<TypeVariable<?>> seen) {
+    Type[] result = new Type[types.length];
+    for (int i = 0; i < types.length; i++) {
+      result[i] = resolvePermissively(types[i], seen);
+    }
+    return result;
+  }
+
+  private static Type resolvePermissively(Type type, Set<TypeVariable<?>> seen) {
+    if (type instanceof TypeVariable) {
+      TypeVariable<?> typeVariable = (TypeVariable<?>) type;
+      if (seen.contains(typeVariable)) {
+        return new Types.WildcardTypeImpl(
+            new Type[0],
+            new Type[] { Object.class });
+      }
+      Type[] bounds = typeVariable.getBounds();
+      Set<TypeVariable<?>> seenPlusThis =
+          ImmutableSet.<TypeVariable<?>>builder()
+              .addAll(seen)
+              .add(typeVariable)
+              .build();
+      return new Types.WildcardTypeImpl(
+          new Type[0],
+          resolvePermissively(bounds, seenPlusThis));
+    }
+    if (type instanceof Class) {
+      return type;
+    }
+    if (type instanceof WildcardType) {
+      WildcardType wildcardType = (WildcardType) type;
+      Type[] lowerBounds = filterTypes(wildcardType.getLowerBounds(), seen);
+      Type[] upperBounds = filterTypes(wildcardType.getUpperBounds(), seen);
+      if (lowerBounds.length == 0 && upperBounds.length == 0) {
+        return new Types.WildcardTypeImpl(
+            new Type[0],
+            new Type[] { Object.class });
+      }
+      return new Types.WildcardTypeImpl(
+          resolvePermissively(lowerBounds, seen),
+          resolvePermissively(upperBounds, seen));
+    }
+    if (type instanceof ParameterizedType) {
+      ParameterizedType parameterizedType = (ParameterizedType) type;
+      Type ownerType = parameterizedType.getOwnerType();
+      Class<?> rawType = (Class<?>) parameterizedType.getRawType();
+      Type[] typeArguments = parameterizedType.getActualTypeArguments();
+      return Types.newParameterizedTypeWithOwner(
+          (ownerType == null) ? null : resolvePermissively(ownerType, seen),
+          rawType,
+          resolvePermissively(typeArguments, seen));
+    }
+    if (type instanceof GenericArrayType) {
+      GenericArrayType arrayType = (GenericArrayType) type;
+      Type componentType = arrayType.getGenericComponentType();
+      return Types.newArrayType(resolvePermissively(componentType, seen));
+    }
+    return type;
+  }
+
+  private static Type[] filterTypes(Type[] types, Set<? extends Type> toRemove) {
+    if (toRemove.isEmpty()) return types;
+    List<Type> result = new ArrayList<>();
+    for (Type type : types) {
+      if (!toRemove.contains(type)) {
+        result.add(type);
+      }
+    }
+    return result.toArray(new Type[0]);
+  }
+
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
   private static class TypeTable {
     private final ImmutableMap<TypeVariableKey, Type> map;
@@ -287,15 +419,31 @@ public final class TypeResolver {
 
     /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
     final TypeTable where(Map<TypeVariableKey, ? extends Type> mappings) {
-      ImmutableMap.Builder<TypeVariableKey, Type> builder = ImmutableMap.builder();
-      builder.putAll(map);
+      Map<TypeVariableKey, Type> builder = new LinkedHashMap<>(map);
       for (Entry<TypeVariableKey, ? extends Type> mapping : mappings.entrySet()) {
         TypeVariableKey variable = mapping.getKey();
         Type type = mapping.getValue();
         checkArgument(!variable.equalsType(type), "Type variable %s bound to itself", variable);
-        builder.put(variable, type);
+        builder.merge(
+            variable,
+            type,
+            (oldType, newType) -> {
+              if (TypeToken.of(newType).isSubtypeOf(oldType)) {
+                return newType;
+              }
+              if (TypeToken.of(oldType).isSubtypeOf(newType)) {
+                return oldType;
+              }
+              throw new IllegalArgumentException(
+                  "Incompatible types for "
+                      + variable
+                      + ": "
+                      + oldType.getTypeName()
+                      + " and "
+                      + newType.getTypeName());
+            });
       }
-      return new TypeTable(builder.build());
+      return new TypeTable(ImmutableMap.copyOf(builder));
     }
 
     final Type resolve(final TypeVariable<?> var) {
