@@ -22,7 +22,6 @@ import static java.util.Arrays.asList;
 import com.google.common.annotations.Beta;
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import java.lang.reflect.GenericArrayType;
@@ -33,11 +32,10 @@ import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -78,7 +76,7 @@ public final class TypeResolver {
    * {@code <?>}.
    */
   static TypeResolver covariantly(Type contextType) {
-    return new TypeResolver().where(toMultimap(TypeMappingIntrospector.getTypeMappings(contextType)));
+    return new TypeResolver().where(TypeMappingIntrospector.getTypeMappings(contextType));
   }
 
   /**
@@ -94,7 +92,7 @@ public final class TypeResolver {
    */
   static TypeResolver invariantly(Type contextType) {
     Type invariantContext = WildcardCapturer.INSTANCE.capture(contextType);
-    return new TypeResolver().where(toMultimap(TypeMappingIntrospector.getTypeMappings(invariantContext)));
+    return new TypeResolver().where(TypeMappingIntrospector.getTypeMappings(invariantContext));
   }
 
   /**
@@ -117,24 +115,25 @@ public final class TypeResolver {
    *     corresponding mappings exist in the current {@code TypeResolver} instance.
    */
   public TypeResolver where(Type formal, Type actual) {
-    Map<TypeVariableKey, Set<Type>> mappings = Maps.newHashMap();
-    populateTypeMappings(mappings, checkNotNull(formal), checkNotNull(actual));
+    TypeVariableConstraints mappings = new TypeVariableConstraints();
+    populateTypeMappings(
+        mappings,
+        TypeVariableConstraints.ConstraintType.EXACT_TYPE,
+        checkNotNull(formal),
+        checkNotNull(actual));
     return where(mappings);
   }
 
   /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
-  TypeResolver where(Map<TypeVariableKey, Set<Type>> mappings) {
+  TypeResolver where(TypeVariableConstraints mappings) {
     return new TypeResolver(typeTable.where(mappings));
   }
 
-  private static Map<TypeVariableKey, Set<Type>> toMultimap(Map<TypeVariableKey, Type> map) {
-    Map<TypeVariableKey, Set<Type>> multimap = new LinkedHashMap<>();
-    map.forEach((k, v) -> { multimap.put(k, new LinkedHashSet<>(ImmutableSet.of(v))); });
-    return multimap;
-  }
-
   private static void populateTypeMappings(
-      final Map<TypeVariableKey, Set<Type>> mappings, final Type from, final Type to) {
+      final TypeVariableConstraints mappings,
+      final TypeVariableConstraints.ConstraintType constraintType,
+      final Type from,
+      final Type to) {
     if (from.equals(to)) {
       return;
     }
@@ -151,9 +150,9 @@ public final class TypeResolver {
           // this type variable.  (This type variable may appear within its own
           // bounds, as in <T extends Comparable<? super T>>.)
           //
-          Map<TypeVariableKey, Set<Type>> map = new LinkedHashMap<>();
-          mappings.forEach((k, v) -> map.put(k, new LinkedHashSet<>(v)));
-          map.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(to);
+          TypeVariableConstraints map = new TypeVariableConstraints();
+          map.addAll(mappings);
+          map.add(key, to, constraintType);
           TypeTable typeTable = new TypeTable().where(map);
           TypeResolver resolver = new TypeResolver(typeTable);
           Type[] resolvedBounds = resolver.resolveTypes(bounds);
@@ -186,7 +185,7 @@ public final class TypeResolver {
                 mostPermissiveBounds[i].getTypeName());
           }
         }
-        mappings.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(to);
+        mappings.add(key, to, constraintType);
       }
 
       @Override
@@ -194,12 +193,20 @@ public final class TypeResolver {
         if (!(to instanceof WildcardType)) {
           for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
             if (!(fromUpperBound instanceof Class)) {
-              populateTypeMappings(mappings, fromUpperBound, to);
+              populateTypeMappings(
+                  mappings,
+                  TypeVariableConstraints.ConstraintType.UPPER_BOUND,
+                  fromUpperBound,
+                  to);
             }
           }
           for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
             if (!(fromLowerBound instanceof Class)) {
-              populateTypeMappings(mappings, fromLowerBound, to);
+              populateTypeMappings(
+                  mappings,
+                  TypeVariableConstraints.ConstraintType.LOWER_BOUND,
+                  fromLowerBound,
+                  to);
             }
           }
           return;
@@ -216,10 +223,18 @@ public final class TypeResolver {
             fromWildcardType,
             to);
         for (int i = 0; i < fromUpperBounds.length; i++) {
-          populateTypeMappings(mappings, fromUpperBounds[i], toUpperBounds[i]);
+          populateTypeMappings(
+              mappings,
+              TypeVariableConstraints.ConstraintType.UPPER_BOUND,
+              fromUpperBounds[i],
+              toUpperBounds[i]);
         }
         for (int i = 0; i < fromLowerBounds.length; i++) {
-          populateTypeMappings(mappings, fromLowerBounds[i], toLowerBounds[i]);
+          populateTypeMappings(
+              mappings,
+              TypeVariableConstraints.ConstraintType.LOWER_BOUND,
+              fromLowerBounds[i],
+              toLowerBounds[i]);
         }
       }
 
@@ -229,17 +244,25 @@ public final class TypeResolver {
           return; // Okay to say Foo<A> is <?>
         }
         if (to instanceof Class && fromParameterizedType.getRawType().equals(Class.class)) {
-          populateTypeMappings(mappings, fromParameterizedType.getActualTypeArguments()[0], to);
+          populateTypeMappings(
+              mappings,
+              TypeVariableConstraints.ConstraintType.EXACT_TYPE,
+              fromParameterizedType.getActualTypeArguments()[0],
+              to);
           return;
         }
         ParameterizedType toParameterizedType = expectArgument(ParameterizedType.class, to);
         if (fromParameterizedType.getOwnerType() != null
             && toParameterizedType.getOwnerType() != null) {
           populateTypeMappings(
-              mappings, fromParameterizedType.getOwnerType(), toParameterizedType.getOwnerType());
+              mappings,
+              TypeVariableConstraints.ConstraintType.EXACT_TYPE,
+              fromParameterizedType.getOwnerType(),
+              toParameterizedType.getOwnerType());
         }
         checkArgument(
-            ((Class<?>) fromParameterizedType.getRawType()).isAssignableFrom((Class<?>) toParameterizedType.getRawType()),
+            ((Class<?>) fromParameterizedType.getRawType())
+                .isAssignableFrom((Class<?>) toParameterizedType.getRawType()),
             "Inconsistent raw type: %s vs. %s",
             fromParameterizedType,
             to);
@@ -251,7 +274,11 @@ public final class TypeResolver {
             fromParameterizedType,
             toParameterizedType);
         for (int i = 0; i < fromArgs.length; i++) {
-          populateTypeMappings(mappings, fromArgs[i], toArgs[i]);
+          populateTypeMappings(
+              mappings,
+              TypeVariableConstraints.ConstraintType.EXACT_TYPE,
+              fromArgs[i],
+              toArgs[i]);
         }
       }
 
@@ -262,7 +289,11 @@ public final class TypeResolver {
         }
         Type componentType = Types.getComponentType(to);
         checkArgument(componentType != null, "%s is not an array type.", to);
-        populateTypeMappings(mappings, fromArrayType.getGenericComponentType(), componentType);
+        populateTypeMappings(
+            mappings,
+            TypeVariableConstraints.ConstraintType.EXACT_TYPE,
+            fromArrayType.getGenericComponentType(),
+            componentType);
       }
 
       @Override
@@ -344,9 +375,6 @@ public final class TypeResolver {
     }
   }
 
-  private static final WildcardType ANY_WILDCARD =
-      new Types.WildcardTypeImpl(new Type[0], new Type[] { Object.class });
-
   private static Type[] resolvePermissively(Type[] types, Set<TypeVariable<?>> seen) {
     Type[] result = new Type[types.length];
     for (int i = 0; i < types.length; i++) {
@@ -359,7 +387,9 @@ public final class TypeResolver {
     if (type instanceof TypeVariable) {
       TypeVariable<?> typeVariable = (TypeVariable<?>) type;
       if (seen.contains(typeVariable)) {
-        return ANY_WILDCARD;
+        return new Types.WildcardTypeImpl(
+            new Type[0],
+            new Type[] { Object.class });
       }
       Type[] bounds = typeVariable.getBounds();
       Set<TypeVariable<?>> seenPlusThis =
@@ -416,54 +446,24 @@ public final class TypeResolver {
     return result.toArray(new Type[0]);
   }
 
-  private static class Bounds {
-    private final Map<TypeVariableKey, Type> exact = new HashMap<>();
-    private final Map<TypeVariableKey, Set<Type>> upper = new HashMap<>();
-    private final Map<TypeVariableKey, Set<Type>> lower = new HashMap<>();
-
-    void putAll(Bounds other) {
-      this.exact.putAll(other.exact);
-      other.lower.forEach((k, v) -> this.lower.computeIfAbsent(k, k2 -> new LinkedHashSet<Type>()).addAll(v));
-      other.upper.forEach((k, v) -> this.upper.computeIfAbsent(k, k2 -> new LinkedHashSet<Type>()).addAll(v));
-    }
-
-    Bounds copy() {
-      Bounds copy = new Bounds();
-      copy.putAll(this);
-      return copy;
-    }
-  }
-
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
   private static class TypeTable {
-    private final ImmutableMap<TypeVariableKey, ImmutableSet<Type>> map;
+    private final TypeVariableConstraints map;
 
     TypeTable() {
-      this.map = ImmutableMap.of();
+      this.map = new TypeVariableConstraints();
     }
 
-    private TypeTable(ImmutableMap<TypeVariableKey, ImmutableSet<Type>> map) {
+    private TypeTable(TypeVariableConstraints map) {
       this.map = map;
     }
 
     /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
-    final TypeTable where(Map<TypeVariableKey, Set<Type>> mappings) {
-      Map<TypeVariableKey, Set<Type>> builder = new LinkedHashMap<>();
-      map.forEach((k, v) -> builder.put(k, new LinkedHashSet<>(v)));
-      for (Entry<TypeVariableKey, Set<Type>> mapping : mappings.entrySet()) {
-        TypeVariableKey variable = mapping.getKey();
-        Set<Type> newTypes = mapping.getValue();
-        for (Type newType : newTypes) {
-          checkArgument(
-              !variable.equalsType(newType),
-              "Type variable %s bound to itself",
-              variable);
-        }
-        builder.computeIfAbsent(variable, k -> new LinkedHashSet<>()).addAll(newTypes);
-      }
-      ImmutableMap.Builder<TypeVariableKey, ImmutableSet<Type>> immutableCopy = ImmutableMap.builder();
-      builder.forEach((k, v) -> { immutableCopy.put(k, ImmutableSet.copyOf(v)); });
-      return new TypeTable(immutableCopy.build());
+    final TypeTable where(TypeVariableConstraints mappings) {
+      TypeVariableConstraints combined = new TypeVariableConstraints();
+      combined.addAll(map);
+      combined.addAll(mappings);
+      return new TypeTable(combined);
     }
 
     final Type resolve(final TypeVariable<?> var) {
@@ -490,8 +490,9 @@ public final class TypeResolver {
      * <p>Should only be called and overridden by {@link #resolve(TypeVariable)}.
      */
     Type resolveInternal(TypeVariable<?> var, TypeTable forDependants) {
-      Set<Type> types = map.getOrDefault(new TypeVariableKey(var), ImmutableSet.of());
-      if (types.isEmpty()) {
+      TypeVariableKey key = new TypeVariableKey(var);
+      Type type = map.get(key);
+      if (type == null) {
         Type[] bounds = var.getBounds();
         if (bounds.length == 0) {
           return var;
@@ -532,76 +533,6 @@ public final class TypeResolver {
         return Types.newArtificialTypeVariable(
             var.getGenericDeclaration(), var.getName(), resolvedBounds);
       }
-      Type type;
-      if (types.size() == 1) {
-        type = types.iterator().next();
-        System.out.println("only one type: " + type);
-      } else {
-        // FIXME: This is incorrect behavior in the context of a lower bound.
-        List<Set<Type>> allTypes = new ArrayList<>();
-        for (Type t : types) {
-          Set<Type> supertypes = new LinkedHashSet<>();
-          for (TypeToken<?> supertype : TypeToken.of(t).getTypes()) {
-            supertypes.add(supertype.getType());
-            // String extends Comparable<String>
-            // Integer extends Comparable<Integer>
-            // so their intersection is Comparable<?>
-            // make sure this doesn't get lost
-            Class<?> rawType = supertype.getRawType();
-            TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
-            if (typeParameters.length == 0) {
-              supertypes.add(rawType);
-            } else {
-              Type[] typeArguments = new Type[typeParameters.length];
-              Arrays.setAll(
-                  typeArguments,
-                  i ->
-                      new Types.WildcardTypeImpl(
-                          new Type[0],
-                          typeParameters[i].getBounds()));
-              ParameterizedType parameterizedType =
-                  Types.newParameterizedType(rawType, typeArguments);
-              supertypes.add(parameterizedType);
-            }
-          }
-          allTypes.add(supertypes);
-        }
-        Set<Type> commonSupertypes = new LinkedHashSet<>(allTypes.get(0));
-        for (int i = 1; i < allTypes.size(); i++) {
-          commonSupertypes.retainAll(allTypes.get(i));
-        }
-        if (commonSupertypes.isEmpty()) {
-          // Shouldn't they all share Object at least?
-          throw new IllegalStateException("no common supertype for " + var);
-        }
-        commonSupertypes.remove(Object.class);
-        if (commonSupertypes.isEmpty()) {
-          type = Object.class;
-          System.out.println("no common supertypes, so Object");
-        } else if (commonSupertypes.size() == 1) {
-          type = commonSupertypes.iterator().next();
-          System.out.println("one common supertype, which is " + type);
-        } else {
-          boolean useTypeVariable = true;
-          if (useTypeVariable) { // TODO: Which approach is better?
-            StringJoiner joiner = new StringJoiner(" & ");
-            for (Type supertype : commonSupertypes) {
-              joiner.add(supertype.getTypeName());
-            }
-            type =
-                Types.newArtificialTypeVariable(
-                    TypeVariable.class,
-                    joiner.toString(),
-                    commonSupertypes.toArray(new Type[0]));
-          } else {
-            type =
-                new Types.WildcardTypeImpl(
-                    new Type[0],
-                    commonSupertypes.toArray(new Type[0]));
-          }
-          System.out.println("intersection type " + type);
-        }
-      }
       // in case the type is yet another type variable.
       return new TypeResolver(forDependants).resolveType(type);
     }
@@ -615,11 +546,18 @@ public final class TypeResolver {
      * Returns type mappings using type parameters and type arguments found in the generic
      * superclass and the super interfaces of {@code contextClass}.
      */
-    static ImmutableMap<TypeVariableKey, Type> getTypeMappings(Type contextType) {
+    static TypeVariableConstraints getTypeMappings(Type contextType) {
       checkNotNull(contextType);
       TypeMappingIntrospector introspector = new TypeMappingIntrospector();
       introspector.visit(contextType);
-      return ImmutableMap.copyOf(introspector.mappings);
+      TypeVariableConstraints mappings = new TypeVariableConstraints();
+      for (Map.Entry<TypeVariableKey, Type> entry : introspector.mappings.entrySet()) {
+        mappings.add(
+            entry.getKey(),
+            entry.getValue(),
+            TypeVariableConstraints.ConstraintType.EXACT_TYPE);
+      }
+      return mappings;
     }
 
     @Override
@@ -837,6 +775,258 @@ public final class TypeResolver {
     private boolean equalsTypeVariable(TypeVariable<?> that) {
       return var.getGenericDeclaration().equals(that.getGenericDeclaration())
           && var.getName().equals(that.getName());
+    }
+  }
+
+  static final class TypeVariableConstraints {
+    public enum ConstraintType { EXACT_TYPE, UPPER_BOUND, LOWER_BOUND }
+
+    private final Map<TypeVariableKey, Type> exactTypes = new HashMap<>();
+    private final Map<TypeVariableKey, Set<Type>> upperBounds = new HashMap<>();
+    private final Map<TypeVariableKey, Set<Type>> lowerBounds = new HashMap<>();
+
+    private static final boolean REPRESENT_INTERSECTION_TYPES_AS_TYPE_VARIABLES = true;
+
+    public @Nullable Type get(TypeVariableKey key) {
+      checkNotNull(key);
+      final Type exactType = getExactType(key);
+      final Type upperBound = getUpperBound(key);
+      final Type lowerBound = getLowerBound(key);
+      if (exactType == null && upperBound == null && lowerBound == null) {
+        return null;
+      }
+      if (upperBound == null && lowerBound == null) {
+        return exactType;
+      }
+      if (exactType == null && lowerBound == null) {
+        return upperBound;
+      }
+      if (exactType == null && upperBound == null) {
+        return lowerBound;
+      }
+      if (exactType == null) {
+        checkArgument(
+            TypeToken.of(lowerBound).isSupertypeOf(upperBound),
+            "No type can satisfy the constraints of %s, "
+                + "which must be a subtype of %s and a supertype of %s",
+            key,
+            lowerBound.getTypeName(),
+            upperBound.getTypeName());
+        return upperBound; // TODO: is this right?
+      }
+      if (upperBound == null) {
+        checkArgument(
+            TypeToken.of(exactType).isSubtypeOf(lowerBound),
+            "No type can satisfy the constraints of %s, "
+                + "which must be %s and a subtype of %s",
+            key,
+            exactType.getTypeName(),
+            lowerBound.getTypeName());
+        return exactType;
+      }
+      if (lowerBound == null) {
+        checkArgument(
+            TypeToken.of(exactType).isSupertypeOf(upperBound),
+            "No type can satisfy the constraints of %s, "
+                + "which must be %s and a supertype of %s",
+            key,
+            exactType.getTypeName(),
+            upperBound.getTypeName());
+        return exactType;
+      }
+      checkArgument(
+          TypeToken.of(exactType).isSubtypeOf(lowerBound)
+              && TypeToken.of(exactType).isSupertypeOf(upperBound)
+              && TypeToken.of(lowerBound).isSupertypeOf(upperBound),
+          "No type can satisfy the constraints of %s, "
+              + "which must be %s, a subtype of %s, and a supertype of %s",
+          key,
+          exactType.getTypeName(),
+          lowerBound.getTypeName(),
+          upperBound.getTypeName());
+      return exactType;
+    }
+
+    private @Nullable Type getExactType(TypeVariableKey key) {
+      checkNotNull(key);
+      return exactTypes.get(key);
+    }
+
+    private @Nullable Type getUpperBound(TypeVariableKey key) {
+      checkNotNull(key);
+      Set<Type> upper = upperBounds.get(key);
+      if (upper == null) {
+        return null;
+      }
+      if (upper.size() == 1) {
+        return upper.iterator().next();
+      }
+      Iterator<Type> iterator = upper.iterator();
+      Set<Type> supertypes = new LinkedHashSet<>(supertypesOf(iterator.next()));
+      while (iterator.hasNext()) {
+        supertypes.retainAll(supertypesOf(iterator.next()));
+      }
+      if (supertypes.isEmpty()) {
+        // Shouldn't they all share Object at least?
+        throw new IllegalArgumentException("No common supertype for " + key);
+      }
+      supertypes.remove(Object.class);
+      if (supertypes.isEmpty()) {
+        return Object.class;
+      }
+      if (supertypes.size() == 1) {
+        return supertypes.iterator().next();
+      }
+      // TODO: Which approach is better?
+      if (REPRESENT_INTERSECTION_TYPES_AS_TYPE_VARIABLES) {
+        StringJoiner intersectionTypeName = new StringJoiner(" & ");
+        for (Type supertype : supertypes) {
+          intersectionTypeName.add(supertype.getTypeName());
+        }
+        return Types.newArtificialTypeVariable(
+            TypeVariable.class,
+            intersectionTypeName.toString(),
+            supertypes.toArray(new Type[0]));
+      } else {
+        return new Types.WildcardTypeImpl(
+            new Type[0],
+            supertypes.toArray(new Type[0]));
+      }
+    }
+
+    private @Nullable Type getLowerBound(TypeVariableKey key) {
+      checkNotNull(key);
+      Set<Type> lower = lowerBounds.get(key);
+      if (lower == null) {
+        return null;
+      }
+      Iterator<Type> iterator = lower.iterator();
+      Type lowest = iterator.next();
+      while (iterator.hasNext()) {
+        Type next = iterator.next();
+        if (TypeToken.of(lowest).isSubtypeOf(next)) {
+          continue;
+        }
+        if (TypeToken.of(next).isSubtypeOf(lowest)) {
+          lowest = next;
+          continue;
+        }
+        throw new IllegalArgumentException(
+            "No type that can conform to lower bounds " + lower);
+      }
+      return lowest;
+    }
+
+    public void add(TypeVariableKey key, Type type, ConstraintType context) {
+      checkNotNull(key);
+      checkNotNull(type);
+      checkNotNull(context);
+      switch (context) {
+        case EXACT_TYPE:
+          setExactType(key, type);
+          return;
+        case UPPER_BOUND:
+          addUpperBound(key, type);
+          return;
+        case LOWER_BOUND:
+          addLowerBound(key, type);
+          return;
+      }
+      throw new AssertionError("Unknown context " + context);
+    }
+
+    public void addAll(TypeVariableConstraints other) {
+      checkNotNull(other);
+      for (Map.Entry<TypeVariableKey, Type> entry : other.exactTypes.entrySet()) {
+        setExactType(entry.getKey(), entry.getValue());
+      }
+      for (Map.Entry<TypeVariableKey, Set<Type>> entry : other.lowerBounds.entrySet()) {
+        for (Type type : entry.getValue()) {
+          addLowerBound(entry.getKey(), type);
+        }
+      }
+      for (Map.Entry<TypeVariableKey, Set<Type>> entry : other.upperBounds.entrySet()) {
+        for (Type type : entry.getValue()) {
+          addUpperBound(entry.getKey(), type);
+        }
+      }
+    }
+
+    private void setExactType(TypeVariableKey key, Type type) {
+      checkNotNull(key);
+      checkNotNull(type);
+      checkNotMappedToSelf(key, type);
+      Type oldType = exactTypes.get(key);
+      checkArgument(
+          (oldType == null) || oldType.equals(type),
+          "Type %s must be exactly %s, so it cannot be %s",
+          key,
+          (oldType == null) ? "null" : oldType.getTypeName(),
+          type.getTypeName());
+      exactTypes.put(key, type);
+    }
+
+    private void addUpperBound(TypeVariableKey key, Type type) {
+      checkNotNull(key);
+      checkNotNull(type);
+      checkNotMappedToSelf(key, type);
+      Set<Type> existing = upperBounds.get(key);
+      if (existing == null) {
+        existing = new LinkedHashSet<>();
+        upperBounds.put(key, existing);
+      }
+      existing.add(type);
+      // TODO: Converge the upper bounds right away?
+    }
+
+    private void addLowerBound(TypeVariableKey key, Type type) {
+      checkNotNull(key);
+      checkNotNull(type);
+      checkNotMappedToSelf(key, type);
+      Set<Type> existing = lowerBounds.get(key);
+      if (existing == null) {
+        existing = new LinkedHashSet<>();
+        lowerBounds.put(key, existing);
+      }
+      existing.add(type);
+      // TODO: Converge the lower bounds right away?
+    }
+
+    private static void checkNotMappedToSelf(TypeVariableKey key, Type type) {
+      checkArgument(
+          !key.equalsType(type),
+          "Type variable %s bound to itself",
+          key);
+    }
+
+    private static Set<Type> supertypesOf(Type type) {
+      Set<Type> supertypes = new LinkedHashSet<>();
+      for (TypeToken<?> supertype : TypeToken.of(type).getTypes()) {
+        supertypes.add(supertype.getType());
+        //
+        // We also need to inspect the raw types.  Suppose that our bounds
+        // contain String and Integer.  String is Comparable<String>, and
+        // Integer is Comparable<Integer>.  They don't share either one of those
+        // parameterized types, but they do share Comparable<?>.
+        //
+        Class<?> rawType = supertype.getRawType();
+        TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
+        if (typeParameters.length == 0) {
+          supertypes.add(rawType);
+        } else {
+          Type[] typeArguments = new Type[typeParameters.length];
+          for (int i = 0; i < typeParameters.length; i++) {
+            typeArguments[i] =
+                new Types.WildcardTypeImpl(
+                    new Type[0],
+                    typeParameters[i].getBounds());
+          }
+          ParameterizedType parameterizedType =
+              Types.newParameterizedType(rawType, typeArguments);
+          supertypes.add(parameterizedType);
+        }
+      }
+      return supertypes;
     }
   }
 }

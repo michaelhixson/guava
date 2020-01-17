@@ -25,7 +25,6 @@ import com.google.common.base.Predicate;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ForwardingSet;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
@@ -222,12 +221,12 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
    * @param typeArg the actual type to substitute
    */
   public final <X> TypeToken<T> where(TypeParameter<X> typeParam, TypeToken<X> typeArg) {
-    TypeResolver resolver =
-        new TypeResolver()
-            .where(
-                ImmutableMap.of(
-                    new TypeResolver.TypeVariableKey(typeParam.typeVariable),
-                    ImmutableSet.of(typeArg.runtimeType)));
+    TypeResolver.TypeVariableConstraints mappings = new TypeResolver.TypeVariableConstraints();
+    mappings.add(
+        new TypeResolver.TypeVariableKey(typeParam.typeVariable),
+        typeArg.runtimeType,
+        TypeResolver.TypeVariableConstraints.ConstraintType.EXACT_TYPE);
+    TypeResolver resolver = new TypeResolver().where(mappings);
     // If there's any type error, we'd report now rather than later.
     return new SimpleTypeToken<T>(resolver.resolveType(runtimeType));
   }
