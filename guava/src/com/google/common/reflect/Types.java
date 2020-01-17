@@ -43,6 +43,7 @@ import java.security.AccessControlException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Map.Entry;
+import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicReference;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -503,14 +504,23 @@ final class Types {
 
     @Override
     public String toString() {
-      StringBuilder builder = new StringBuilder("?");
-      for (Type lowerBound : lowerBounds) {
-        builder.append(" super ").append(JavaVersion.CURRENT.typeName(lowerBound));
+      if (!lowerBounds.isEmpty()) {
+        StringJoiner joiner = new StringJoiner(" & ", "? super ", "");
+        for (Type bound : lowerBounds) {
+          joiner.add(bound.getTypeName());
+        }
+        return joiner.toString();
       }
-      for (Type upperBound : filterUpperBounds(upperBounds)) {
-        builder.append(" extends ").append(JavaVersion.CURRENT.typeName(upperBound));
+
+      if (upperBounds.isEmpty() || upperBounds.get(0).equals(Object.class)) {
+        return "?";
       }
-      return builder.toString();
+
+      StringJoiner joiner = new StringJoiner(" & ", "? extends ", "");
+      for (Type bound : upperBounds) {
+        joiner.add(bound.getTypeName());
+      }
+      return joiner.toString();
     }
 
     private static final long serialVersionUID = 0;

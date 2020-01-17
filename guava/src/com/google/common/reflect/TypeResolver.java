@@ -32,12 +32,14 @@ import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -76,7 +78,7 @@ public final class TypeResolver {
    * {@code <?>}.
    */
   static TypeResolver covariantly(Type contextType) {
-    return new TypeResolver().where(TypeMappingIntrospector.getTypeMappings(contextType));
+    return new TypeResolver().where(toMultimap(TypeMappingIntrospector.getTypeMappings(contextType)));
   }
 
   /**
@@ -92,7 +94,7 @@ public final class TypeResolver {
    */
   static TypeResolver invariantly(Type contextType) {
     Type invariantContext = WildcardCapturer.INSTANCE.capture(contextType);
-    return new TypeResolver().where(TypeMappingIntrospector.getTypeMappings(invariantContext));
+    return new TypeResolver().where(toMultimap(TypeMappingIntrospector.getTypeMappings(invariantContext)));
   }
 
   /**
@@ -115,24 +117,31 @@ public final class TypeResolver {
    *     corresponding mappings exist in the current {@code TypeResolver} instance.
    */
   public TypeResolver where(Type formal, Type actual) {
-    Map<TypeVariableKey, Type> mappings = Maps.newHashMap();
+    Map<TypeVariableKey, Set<Type>> mappings = Maps.newHashMap();
     populateTypeMappings(mappings, checkNotNull(formal), checkNotNull(actual));
     return where(mappings);
   }
 
   /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
-  TypeResolver where(Map<TypeVariableKey, ? extends Type> mappings) {
+  TypeResolver where(Map<TypeVariableKey, Set<Type>> mappings) {
     return new TypeResolver(typeTable.where(mappings));
   }
 
+  private static Map<TypeVariableKey, Set<Type>> toMultimap(Map<TypeVariableKey, Type> map) {
+    Map<TypeVariableKey, Set<Type>> multimap = new LinkedHashMap<>();
+    map.forEach((k, v) -> { multimap.put(k, new LinkedHashSet<>(ImmutableSet.of(v))); });
+    return multimap;
+  }
+
   private static void populateTypeMappings(
-      final Map<TypeVariableKey, Type> mappings, final Type from, final Type to) {
+      final Map<TypeVariableKey, Set<Type>> mappings, final Type from, final Type to) {
     if (from.equals(to)) {
       return;
     }
     new TypeVisitor() {
       @Override
       void visitTypeVariable(TypeVariable<?> typeVariable) {
+        TypeVariableKey key = new TypeVariableKey(typeVariable);
         Type[] bounds = typeVariable.getBounds();
         if (bounds.length > 0 && !(bounds.length == 1 && bounds[0].equals(Object.class))) {
           //
@@ -142,9 +151,10 @@ public final class TypeResolver {
           // this type variable.  (This type variable may appear within its own
           // bounds, as in <T extends Comparable<? super T>>.)
           //
-          Map<TypeVariableKey, Type> map = new LinkedHashMap<>(mappings);
-          map.put(new TypeVariableKey(typeVariable), to);
-          TypeTable typeTable = new TypeTable(ImmutableMap.copyOf(map));
+          Map<TypeVariableKey, Set<Type>> map = new LinkedHashMap<>();
+          mappings.forEach((k, v) -> map.put(k, new LinkedHashSet<>(v)));
+          map.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(to);
+          TypeTable typeTable = new TypeTable().where(map);
           TypeResolver resolver = new TypeResolver(typeTable);
           Type[] resolvedBounds = resolver.resolveTypes(bounds);
           //
@@ -176,7 +186,7 @@ public final class TypeResolver {
                 mostPermissiveBounds[i].getTypeName());
           }
         }
-        mappings.put(new TypeVariableKey(typeVariable), to);
+        mappings.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(to);
       }
 
       @Override
@@ -334,6 +344,9 @@ public final class TypeResolver {
     }
   }
 
+  private static final WildcardType ANY_WILDCARD =
+      new Types.WildcardTypeImpl(new Type[0], new Type[] { Object.class });
+
   private static Type[] resolvePermissively(Type[] types, Set<TypeVariable<?>> seen) {
     Type[] result = new Type[types.length];
     for (int i = 0; i < types.length; i++) {
@@ -346,9 +359,7 @@ public final class TypeResolver {
     if (type instanceof TypeVariable) {
       TypeVariable<?> typeVariable = (TypeVariable<?>) type;
       if (seen.contains(typeVariable)) {
-        return new Types.WildcardTypeImpl(
-            new Type[0],
-            new Type[] { Object.class });
+        return ANY_WILDCARD;
       }
       Type[] bounds = typeVariable.getBounds();
       Set<TypeVariable<?>> seenPlusThis =
@@ -405,45 +416,54 @@ public final class TypeResolver {
     return result.toArray(new Type[0]);
   }
 
+  private static class Bounds {
+    private final Map<TypeVariableKey, Type> exact = new HashMap<>();
+    private final Map<TypeVariableKey, Set<Type>> upper = new HashMap<>();
+    private final Map<TypeVariableKey, Set<Type>> lower = new HashMap<>();
+
+    void putAll(Bounds other) {
+      this.exact.putAll(other.exact);
+      other.lower.forEach((k, v) -> this.lower.computeIfAbsent(k, k2 -> new LinkedHashSet<Type>()).addAll(v));
+      other.upper.forEach((k, v) -> this.upper.computeIfAbsent(k, k2 -> new LinkedHashSet<Type>()).addAll(v));
+    }
+
+    Bounds copy() {
+      Bounds copy = new Bounds();
+      copy.putAll(this);
+      return copy;
+    }
+  }
+
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
   private static class TypeTable {
-    private final ImmutableMap<TypeVariableKey, Type> map;
+    private final ImmutableMap<TypeVariableKey, ImmutableSet<Type>> map;
 
     TypeTable() {
       this.map = ImmutableMap.of();
     }
 
-    private TypeTable(ImmutableMap<TypeVariableKey, Type> map) {
+    private TypeTable(ImmutableMap<TypeVariableKey, ImmutableSet<Type>> map) {
       this.map = map;
     }
 
     /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
-    final TypeTable where(Map<TypeVariableKey, ? extends Type> mappings) {
-      Map<TypeVariableKey, Type> builder = new LinkedHashMap<>(map);
-      for (Entry<TypeVariableKey, ? extends Type> mapping : mappings.entrySet()) {
+    final TypeTable where(Map<TypeVariableKey, Set<Type>> mappings) {
+      Map<TypeVariableKey, Set<Type>> builder = new LinkedHashMap<>();
+      map.forEach((k, v) -> builder.put(k, new LinkedHashSet<>(v)));
+      for (Entry<TypeVariableKey, Set<Type>> mapping : mappings.entrySet()) {
         TypeVariableKey variable = mapping.getKey();
-        Type type = mapping.getValue();
-        checkArgument(!variable.equalsType(type), "Type variable %s bound to itself", variable);
-        builder.merge(
-            variable,
-            type,
-            (oldType, newType) -> {
-              if (TypeToken.of(newType).isSubtypeOf(oldType)) {
-                return newType;
-              }
-              if (TypeToken.of(oldType).isSubtypeOf(newType)) {
-                return oldType;
-              }
-              throw new IllegalArgumentException(
-                  "Incompatible types for "
-                      + variable
-                      + ": "
-                      + oldType.getTypeName()
-                      + " and "
-                      + newType.getTypeName());
-            });
+        Set<Type> newTypes = mapping.getValue();
+        for (Type newType : newTypes) {
+          checkArgument(
+              !variable.equalsType(newType),
+              "Type variable %s bound to itself",
+              variable);
+        }
+        builder.computeIfAbsent(variable, k -> new LinkedHashSet<>()).addAll(newTypes);
       }
-      return new TypeTable(ImmutableMap.copyOf(builder));
+      ImmutableMap.Builder<TypeVariableKey, ImmutableSet<Type>> immutableCopy = ImmutableMap.builder();
+      builder.forEach((k, v) -> { immutableCopy.put(k, ImmutableSet.copyOf(v)); });
+      return new TypeTable(immutableCopy.build());
     }
 
     final Type resolve(final TypeVariable<?> var) {
@@ -470,8 +490,8 @@ public final class TypeResolver {
      * <p>Should only be called and overridden by {@link #resolve(TypeVariable)}.
      */
     Type resolveInternal(TypeVariable<?> var, TypeTable forDependants) {
-      Type type = map.get(new TypeVariableKey(var));
-      if (type == null) {
+      Set<Type> types = map.getOrDefault(new TypeVariableKey(var), ImmutableSet.of());
+      if (types.isEmpty()) {
         Type[] bounds = var.getBounds();
         if (bounds.length == 0) {
           return var;
@@ -511,6 +531,76 @@ public final class TypeResolver {
         }
         return Types.newArtificialTypeVariable(
             var.getGenericDeclaration(), var.getName(), resolvedBounds);
+      }
+      Type type;
+      if (types.size() == 1) {
+        type = types.iterator().next();
+        System.out.println("only one type: " + type);
+      } else {
+        // FIXME: This is incorrect behavior in the context of a lower bound.
+        List<Set<Type>> allTypes = new ArrayList<>();
+        for (Type t : types) {
+          Set<Type> supertypes = new LinkedHashSet<>();
+          for (TypeToken<?> supertype : TypeToken.of(t).getTypes()) {
+            supertypes.add(supertype.getType());
+            // String extends Comparable<String>
+            // Integer extends Comparable<Integer>
+            // so their intersection is Comparable<?>
+            // make sure this doesn't get lost
+            Class<?> rawType = supertype.getRawType();
+            TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
+            if (typeParameters.length == 0) {
+              supertypes.add(rawType);
+            } else {
+              Type[] typeArguments = new Type[typeParameters.length];
+              Arrays.setAll(
+                  typeArguments,
+                  i ->
+                      new Types.WildcardTypeImpl(
+                          new Type[0],
+                          typeParameters[i].getBounds()));
+              ParameterizedType parameterizedType =
+                  Types.newParameterizedType(rawType, typeArguments);
+              supertypes.add(parameterizedType);
+            }
+          }
+          allTypes.add(supertypes);
+        }
+        Set<Type> commonSupertypes = new LinkedHashSet<>(allTypes.get(0));
+        for (int i = 1; i < allTypes.size(); i++) {
+          commonSupertypes.retainAll(allTypes.get(i));
+        }
+        if (commonSupertypes.isEmpty()) {
+          // Shouldn't they all share Object at least?
+          throw new IllegalStateException("no common supertype for " + var);
+        }
+        commonSupertypes.remove(Object.class);
+        if (commonSupertypes.isEmpty()) {
+          type = Object.class;
+          System.out.println("no common supertypes, so Object");
+        } else if (commonSupertypes.size() == 1) {
+          type = commonSupertypes.iterator().next();
+          System.out.println("one common supertype, which is " + type);
+        } else {
+          boolean useTypeVariable = true;
+          if (useTypeVariable) { // TODO: Which approach is better?
+            StringJoiner joiner = new StringJoiner(" & ");
+            for (Type supertype : commonSupertypes) {
+              joiner.add(supertype.getTypeName());
+            }
+            type =
+                Types.newArtificialTypeVariable(
+                    TypeVariable.class,
+                    joiner.toString(),
+                    commonSupertypes.toArray(new Type[0]));
+          } else {
+            type =
+                new Types.WildcardTypeImpl(
+                    new Type[0],
+                    commonSupertypes.toArray(new Type[0]));
+          }
+          System.out.println("intersection type " + type);
+        }
       }
       // in case the type is yet another type variable.
       return new TypeResolver(forDependants).resolveType(type);

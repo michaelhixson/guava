@@ -226,7 +226,8 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
         new TypeResolver()
             .where(
                 ImmutableMap.of(
-                    new TypeResolver.TypeVariableKey(typeParam.typeVariable), typeArg.runtimeType));
+                    new TypeResolver.TypeVariableKey(typeParam.typeVariable),
+                    ImmutableSet.of(typeArg.runtimeType)));
     // If there's any type error, we'd report now rather than later.
     return new SimpleTypeToken<T>(resolver.resolveType(runtimeType));
   }
