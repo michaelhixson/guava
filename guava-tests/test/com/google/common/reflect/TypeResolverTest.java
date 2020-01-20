@@ -79,12 +79,12 @@ public class TypeResolverTest extends TestCase {
 
   public <T> void testWhere_duplicateMapping() {
     Type t = aTypeVariable();
-    TypeResolver resolver = new TypeResolver().where(t, String.class);
-    try {
-      resolver.where(t, String.class);
-      fail();
-    } catch (IllegalArgumentException expected) {
-    }
+    assertEquals(
+        String.class,
+        new TypeResolver()
+            .where(t, String.class)
+            .where(t, String.class)
+            .resolveType(t));
   }
 
   public <T1, T2 extends List<T1>> void testWhere_recursiveMapping() {

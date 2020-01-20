@@ -26,7 +26,6 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ForwardingSet;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Primitives;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -42,9 +41,12 @@ import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.StringJoiner;
 import org.checkerframework.checker.nullness.qual.MonotonicNonNull;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -221,11 +223,11 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
    * @param typeArg the actual type to substitute
    */
   public final <X> TypeToken<T> where(TypeParameter<X> typeParam, TypeToken<X> typeArg) {
-    TypeResolver.TypeVariableConstraints mappings = new TypeResolver.TypeVariableConstraints();
+    TypeResolver.Constraints mappings = new TypeResolver.Constraints();
     mappings.add(
         new TypeResolver.TypeVariableKey(typeParam.typeVariable),
         typeArg.runtimeType,
-        TypeResolver.TypeVariableConstraints.ConstraintType.EXACT_TYPE);
+        TypeResolver.ConstraintType.EXACT_TYPE);
     TypeResolver resolver = new TypeResolver().where(mappings);
     // If there's any type error, we'd report now rather than later.
     return new SimpleTypeToken<T>(resolver.resolveType(runtimeType));
@@ -471,6 +473,14 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
    */
   public final boolean isSubtypeOf(Type supertype) {
     checkNotNull(supertype);
+    if (supertype instanceof AnyType) {
+      AnyType anyType = (AnyType) supertype;
+      return anyType.isSupertypeOf(runtimeType);
+    }
+    if (runtimeType instanceof AnyType) {
+      AnyType anyType = (AnyType) runtimeType;
+      return anyType.isSubtypeOf(supertype);
+    }
     if (supertype instanceof WildcardType) {
       // if 'supertype' is <? super Foo>, 'this' can be:
       // Foo, SubFoo, <? extends Foo>.
@@ -501,6 +511,136 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
       return this.isSubtypeOfArrayType((GenericArrayType) supertype);
     } else { // to instanceof TypeVariable
       return false;
+    }
+  }
+
+  /**
+   * Returns {@code true} if this type has the potential to be a subtype of the
+   * specified type once the type variables in the specified type are resolved.
+   * For example, {@code List<Number>} has the potential to be a subtype of
+   * {@code List<T>} if {@code T}'s only bound is {@code Object}.  However,
+   * {@code List<Number>} can never be a subtype of {@code List<T>} if {@code
+   * T}'s bound is {@code Comparable}, since {@code Number} is not {@code
+   * Comparable}.
+   */
+  final boolean isPotentialSubtypeOf(Type supertype) {
+    checkNotNull(supertype);
+    return isSubtypeOf(AnyType.replaceVariables(supertype));
+  }
+
+  private static final class AnyType implements Type {
+    private final ImmutableSet<Type> bounds;
+
+    private static final AnyType UNBOUNDED = new AnyType(ImmutableSet.of());
+
+    static AnyType of(Type... bounds) {
+      if ((bounds.length == 0) || (bounds.length == 1 && Object.class.equals(bounds[0]))) {
+        return UNBOUNDED;
+      }
+      ImmutableSet.Builder<Type> builder = ImmutableSet.builder();
+      for (Type bound : bounds) {
+        if (!bound.equals(Object.class)) {
+          builder.add(bound);
+        }
+      }
+      return new AnyType(builder.build());
+    }
+
+    private AnyType(ImmutableSet<Type> bounds) {
+      this.bounds = Objects.requireNonNull(bounds);
+    }
+
+    boolean isSubtypeOf(Type type) {
+      for (Type bound : bounds) {
+        if (!TypeToken.of(bound).isSubtypeOf(type) && !TypeToken.of(bound).isSupertypeOf(type)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    boolean isSupertypeOf(Type type) {
+      for (Type bound : bounds) {
+        if (!TypeToken.of(type).isSubtypeOf(bound)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    @Override
+    public boolean equals(@Nullable Object object) {
+      return object instanceof AnyType
+          && bounds.equals(((AnyType) object).bounds);
+    }
+
+    @Override
+    public int hashCode() {
+      return bounds.hashCode();
+    }
+
+    @Override
+    public String toString() {
+      StringJoiner joiner = new StringJoiner(" & ", "Any<", ">");
+      for (Type bound : bounds) {
+        joiner.add(bound.getTypeName());
+      }
+      return joiner.toString();
+    }
+
+    static Type replaceVariables(Type type) {
+      checkNotNull(type);
+      return replaceVariables(type, ImmutableSet.of());
+    }
+
+    private static Type replaceVariables(Type type, Set<TypeVariable<?>> seen) {
+      checkNotNull(type);
+      checkNotNull(seen);
+      if (type instanceof TypeVariable) {
+        TypeVariable<?> typeVariable = (TypeVariable<?>) type;
+        if (seen.contains(typeVariable)) {
+          return AnyType.of();
+        }
+        Type[] bounds = typeVariable.getBounds();
+        Set<TypeVariable<?>> seenPlusThis =
+            ImmutableSet.<TypeVariable<?>>builder()
+                .addAll(seen)
+                .add(typeVariable)
+                .build();
+        return AnyType.of(replaceVariables(bounds, seenPlusThis));
+      }
+      if (type instanceof WildcardType) {
+        WildcardType wildcardType = (WildcardType) type;
+        Type[] lowerBounds = wildcardType.getLowerBounds();
+        Type[] upperBounds = wildcardType.getUpperBounds();
+        return new Types.WildcardTypeImpl(
+            replaceVariables(lowerBounds, seen),
+            replaceVariables(upperBounds, seen));
+      }
+      if (type instanceof ParameterizedType) {
+        ParameterizedType parameterizedType = (ParameterizedType) type;
+        Type ownerType = parameterizedType.getOwnerType();
+        Class<?> rawType = (Class<?>) parameterizedType.getRawType();
+        Type[] typeArguments = parameterizedType.getActualTypeArguments();
+        return Types.newParameterizedTypeWithOwner(
+            (ownerType == null) ? null : replaceVariables(ownerType, seen),
+            rawType,
+            replaceVariables(typeArguments, seen));
+      }
+      if (type instanceof GenericArrayType) {
+        GenericArrayType arrayType = (GenericArrayType) type;
+        Type componentType = arrayType.getGenericComponentType();
+        return Types.newArrayType(replaceVariables(componentType, seen));
+      }
+      return type;
+    }
+
+    private static Type[] replaceVariables(Type[] types, Set<TypeVariable<?>> seen) {
+      checkNotNull(types);
+      checkNotNull(seen);
+      Type[] result = new Type[types.length];
+      Arrays.setAll(result, i -> replaceVariables(types[i], seen));
+      return result;
     }
   }
 
@@ -876,6 +1016,9 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
   }
 
   private boolean someRawTypeIsSubclassOf(Class<?> superclass) {
+    if (runtimeType instanceof Class && superclass.equals(Class.class)) {
+      return true;
+    }
     for (Class<?> rawType : getRawTypes()) {
       if (superclass.isAssignableFrom(rawType)) {
         return true;
@@ -888,6 +1031,11 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
     Class<?> matchedClass = of(supertype).getRawType();
     if (!someRawTypeIsSubclassOf(matchedClass)) {
       return false;
+    }
+    if (runtimeType instanceof Class && matchedClass.equals(Class.class)) {
+      Type[] supertypeArgs = supertype.getActualTypeArguments();
+      Type supertypeClassType = supertypeArgs[0];
+      return isSubtypeOf(supertypeClassType);
     }
     TypeVariable<?>[] typeVars = matchedClass.getTypeParameters();
     Type[] supertypeArgs = supertype.getActualTypeArguments();
@@ -969,6 +1117,14 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
   private boolean is(Type formalType, TypeVariable<?> declaration) {
     if (runtimeType.equals(formalType)) {
       return true;
+    }
+    if (formalType instanceof AnyType) {
+      AnyType anyType = (AnyType) formalType;
+      return anyType.isSupertypeOf(runtimeType);
+    }
+    if (runtimeType instanceof AnyType) {
+      AnyType anyType = (AnyType) runtimeType;
+      return anyType.isSubtypeOf(formalType);
     }
     if (formalType instanceof WildcardType) {
       WildcardType your = canonicalizeWildcardType(declaration, (WildcardType) formalType);
@@ -1360,7 +1516,7 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
 
     ImmutableList<K> collectTypes(Iterable<? extends K> types) {
       // type -> order number. 1 for Object, 2 for anything directly below, so on so forth.
-      Map<K, Integer> map = Maps.newHashMap();
+      Map<K, Integer> map = new LinkedHashMap<>();
       for (K type : types) {
         collectTypes(type, map);
       }
