@@ -120,24 +120,6 @@ public final class TypeResolver {
     return where(mappings);
   }
 
-  /**
-   * Like {@link #where(Type, Type)}, except this method throws {@link
-   * IllegalArgumentException} if it is impossible for {@code actual} to be a
-   * subtype of {@code formal} no matter how the type variables in {@code
-   * formal} are resolved.
-   *
-   * @throws IllegalArgumentException if {@code actual} cannot be a subtype of
-   *         {@code formal}
-   */
-  public TypeResolver whereChecked(Type formal, Type actual) {
-    checkArgument(
-        TypeToken.of(actual).isPotentialSubtypeOf(formal),
-        "%s cannot be a subtype of %s",
-        actual.getTypeName(),
-        formal.getTypeName());
-    return where(formal, actual);
-  }
-
   /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
   TypeResolver where(Constraints mappings) {
     return new TypeResolver(typeTable.where(mappings));

@@ -27,11 +27,9 @@ import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.checkerframework.checker.nullness.qual.Nullable;
+import org.junit.Ignore;
 import org.junit.Test;
 
-/**
- * Tests for {@link TypeResolver#whereChecked(Type, Type)}.
- */
 public final class StrictTypeResolverTest {
   @Test
   public void listsReverse() throws Exception {
@@ -39,7 +37,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<ArrayList<String>>() {}.capture());
 
@@ -58,7 +56,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Collection<String>>() {}.capture());
 
@@ -77,7 +75,7 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<Collection<Number>>() {}.capture());
       fail();
@@ -90,7 +88,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 TimeUnit.class);
 
@@ -112,7 +110,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Map<String, Integer>>() {}.capture());
 
@@ -131,10 +129,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 String.class)
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 Integer.class);
 
@@ -157,10 +155,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Map<String, Integer>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<com.google.common.base.Function<Integer, Long>>() {}.capture());
 
@@ -183,10 +181,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Function<String, Integer>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Function<String, Long>>() {}.capture());
 
@@ -209,7 +207,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Stream<String>[]>() {}.capture());
 
@@ -228,10 +226,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Map.Entry<Integer, String>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Map.Entry<String, Integer>>() {}.capture());
 
@@ -256,10 +254,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture());
 
@@ -284,12 +282,13 @@ public final class StrictTypeResolverTest {
                                                          List<? extends Optional<? super T>> b) { return null; }
 
   @Test
+  @Ignore("Old TypeResolver allowed this, and this has nothing to do with type variables")
   public void listSuper() throws Exception {
     Method method = StrictTypeResolverTest.class.getMethod("listSuper", List.class);
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<ArrayList<Optional<String>>>() {}.capture());
       fail();
@@ -306,7 +305,7 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -329,10 +328,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Integer>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<List<Integer>>>() {}.capture());
 
@@ -359,10 +358,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<String>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -405,10 +404,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<String>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Void>>() {}.capture());
 
@@ -435,10 +434,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Consumer<CharSequence>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Consumer<String>>() {}.capture());
 
@@ -465,10 +464,10 @@ public final class StrictTypeResolverTest {
 
     try {
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Consumer<String>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Consumer<Integer>>() {}.capture());
       fail();
@@ -483,13 +482,13 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Consumer<Serializable>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Consumer<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[2],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -520,13 +519,13 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<Consumer<Serializable>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[1],
               new TypeCapture<Consumer<Number>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[2],
               new TypeCapture<List<String>>() {}.capture());
       fail();
@@ -539,10 +538,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Integer>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -567,10 +566,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -596,10 +595,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -624,10 +623,10 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<List<Integer>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[1],
               new TypeCapture<List<Number>>() {}.capture());
       fail();
@@ -644,10 +643,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -672,10 +671,10 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<List<Integer>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[1],
               new TypeCapture<List<Number>>() {}.capture());
       fail();
@@ -692,13 +691,13 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Serializable>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[2],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -727,13 +726,13 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<List<Number>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[1],
               new TypeCapture<List<Serializable>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[2],
               new TypeCapture<List<String>>() {}.capture());
       fail();
@@ -748,10 +747,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Serializable>>() {}.capture());
 
@@ -776,10 +775,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
@@ -806,10 +805,10 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Integer>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Double>>() {}.capture());
 
@@ -845,10 +844,10 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<List<Number>>() {}.capture())
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[1],
               new TypeCapture<List<String>>() {}.capture());
       fail();
@@ -867,13 +866,13 @@ public final class StrictTypeResolverTest {
 
     TypeResolver resolver =
         new TypeResolver()
-            .whereChecked(
+            .where(
                 keyField.getGenericType(),
                 new TypeCapture<List<String>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Function<String, Long>>() {}.capture())
-            .whereChecked(
+            .where(
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Supplier<Long>>() {}.capture());
 
@@ -913,12 +912,12 @@ public final class StrictTypeResolverTest {
 
     try {
       new TypeResolver()
-          .whereChecked(
+          .where(
               keyField.getGenericType(),
               new TypeCapture<List<Integer>>() {}.capture())
           // Throws.  "? super T" is Integer because of the first binding,
           // so "? super T" cannot also be String in this second binding.
-          .whereChecked(
+          .where(
               method.getGenericParameterTypes()[0],
               new TypeCapture<Function<String, Long>>() {}.capture());
       fail();
