@@ -8,6 +8,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
 import java.io.Serializable;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
@@ -21,9 +22,11 @@ import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.Test;
 
 /**
@@ -740,7 +743,7 @@ public final class StrictTypeResolverTest {
   public static <T> T exactLowerUpper(List<T> a, List<? super T> b, List<? extends T> c) { return null; }
 
   @Test
-  public void variableInBounds() throws Exception {
+  public void variableInBounds0() throws Exception {
     Method method = StrictTypeResolverTest.class.getMethod("variableInBounds", List.class, List.class);
 
     TypeResolver resolver =
@@ -765,6 +768,34 @@ public final class StrictTypeResolverTest {
         resolver.resolveType(method.getGenericReturnType()));
 
     variableInBounds(new ArrayList<Number>(), new ArrayList<Serializable>());
+  }
+
+  @Test
+  public void variableInBounds1() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("variableInBounds", List.class, List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .whereChecked(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Number>>() {}.capture())
+            .whereChecked(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<List<Integer>>() {}.capture());
+
+    assertEquals(
+        new TypeCapture<List<? super Number>>() {}.capture(),
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        new TypeCapture<List<? super Integer>>() {}.capture(),
+        resolver.resolveType(method.getGenericParameterTypes()[1]));
+
+    assertEquals(
+        Integer.class,
+        resolver.resolveType(method.getGenericReturnType()));
+
+    variableInBounds(new ArrayList<Number>(), new ArrayList<Integer>());
   }
 
   public static <T extends Number, U extends T> T variableInBounds(List<? super U> a, List<? super T> b) { return null; }
@@ -827,4 +858,87 @@ public final class StrictTypeResolverTest {
   }
 
   public static <T, U extends T> T variableInBounds3(List<? super U> a, List<? super T> b) { return null; }
+
+  @Test
+  public void testBox() throws Exception {
+    Field keyField = Box.class.getField("key");
+    Field valueField = Box.class.getField("value");
+    Method method = Box.class.getMethod("transformValue", Function.class, Supplier.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .whereChecked(
+                keyField.getGenericType(),
+                new TypeCapture<List<String>>() {}.capture())
+            .whereChecked(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Function<String, Long>>() {}.capture())
+            .whereChecked(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Supplier<Long>>() {}.capture());
+
+    assertEquals(
+        new TypeCapture<Function<? super String, ? extends Long>>() {}.capture(),
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        new TypeCapture<Supplier<? extends Long>>() {}.capture(),
+        resolver.resolveType(method.getGenericParameterTypes()[1]));
+
+    assertEquals(
+        new TypeCapture<Map.Entry<List<String>, Long>>() {}.capture(),
+        resolver.resolveType(method.getGenericReturnType()));
+
+    assertEquals(
+        new TypeCapture<List<String>>() {}.capture(),
+        resolver.resolveType(keyField.getGenericType()));
+
+    assertEquals(
+        String.class,
+        resolver.resolveType(valueField.getGenericType()));
+
+    Box<String, List<String>> box = new Box<String, List<String>>();
+
+    Map.Entry<List<String>, Long> entry =
+        box.transformValue(
+            (Function<String, Long>) Long::parseLong,
+            (Supplier<Long>) () -> Long.MAX_VALUE);
+  }
+
+  @Test
+  public void testBoxBad() throws Exception {
+    Field keyField = Box.class.getField("key");
+    Field valueField = Box.class.getField("value");
+    Method method = Box.class.getMethod("transformValue", Function.class, Supplier.class);
+
+    try {
+      new TypeResolver()
+          .whereChecked(
+              keyField.getGenericType(),
+              new TypeCapture<List<Integer>>() {}.capture())
+          // Throws.  "? super T" is Integer because of the first binding,
+          // so "? super T" cannot also be String in this second binding.
+          .whereChecked(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Function<String, Long>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+  }
+
+  public static final class Box<
+      TBoxValueField extends Serializable,
+      TBoxKeyField extends Iterable<? super TBoxValueField>> {
+
+    public @Nullable TBoxValueField value;
+    public @Nullable TBoxKeyField key;
+
+    public <TBoxMethodValue extends Comparable<? super TBoxMethodValue>>
+    Map.Entry<TBoxKeyField, TBoxMethodValue> transformValue(
+        Function<? super TBoxValueField, ? extends TBoxMethodValue> transformer,
+        Supplier<? extends TBoxMethodValue> supplier) {
+
+      TBoxMethodValue u = (value == null) ? supplier.get() : transformer.apply(value);
+      return Maps.immutableEntry(key, u);
+    }
+  }
 }

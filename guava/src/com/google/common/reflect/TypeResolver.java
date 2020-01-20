@@ -154,7 +154,19 @@ public final class TypeResolver {
     new TypeVisitor() {
       @Override
       void visitTypeVariable(TypeVariable<?> typeVariable) {
-        mappings.add(new TypeVariableKey(typeVariable), to, constraintType);
+        if (mappings.add(new TypeVariableKey(typeVariable), to, constraintType)) {
+          for (Type bound : typeVariable.getBounds()) {
+            if (!(bound instanceof Class)) {
+              populateTypeMappings(
+                  mappings,
+                  (constraintType == ConstraintType.LOWER_BOUND)
+                      ? ConstraintType.RELATED_TYPE
+                      : ConstraintType.UPPER_BOUND,
+                  bound,
+                  to);
+            }
+          }
+        }
       }
 
       @Override
@@ -220,7 +232,17 @@ public final class TypeResolver {
               to);
           return;
         }
-        ParameterizedType toParameterizedType = expectArgument(ParameterizedType.class, to);
+        ParameterizedType toParameterizedType;
+        if (to instanceof Class) {
+          // TODO: A test is asserting that this exception is thrown, but it's not clear why.
+          checkArgument(((Class<?>) to).getTypeParameters().length  == 0);
+          toParameterizedType =
+              expectArgument(
+                  ParameterizedType.class,
+                  TypeToken.of(to).getSupertype((Class) fromParameterizedType.getRawType()).getType());
+        } else {
+          toParameterizedType = expectArgument(ParameterizedType.class, to);
+        }
         if (fromParameterizedType.getOwnerType() != null
             && toParameterizedType.getOwnerType() != null) {
           populateTypeMappings(
@@ -919,9 +941,12 @@ public final class TypeResolver {
       }
     }
 
-    private void addExactType(Type type) {
+    private boolean addExactType(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
+      if (type.equals(exactType)) {
+        return false;
+      }
       checkArgument(
           (exactType == null) || exactType.equals(type),
           "Type %s must be exactly %s, so it cannot be %s",
@@ -929,21 +954,25 @@ public final class TypeResolver {
           (exactType == null) ? "null" : exactType.getTypeName(),
           type.getTypeName());
       exactType = type;
+      return true;
     }
 
-    private void addRelatedType(Type type) {
+    private boolean addRelatedType(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
+      if (type.equals(relatedType)) {
+        return false;
+      }
       if (relatedType == null) {
         relatedType = type;
-        return;
+        return true;
       }
       if (TypeToken.of(type).isSubtypeOf(relatedType)) {
         relatedType = type;
-        return;
+        return true;
       }
       if (TypeToken.of(relatedType).isSubtypeOf(type)) {
-        return;
+        return true;
       }
       throw new IllegalArgumentException(
           "Type "
@@ -954,23 +983,23 @@ public final class TypeResolver {
               + type.getTypeName());
     }
 
-    private void addUpperBound(Type type) {
+    private boolean addUpperBound(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       if (upperBounds == null) {
         upperBounds = new LinkedHashSet<>();
       }
-      upperBounds.add(type);
+      return upperBounds.add(type);
       // TODO: Converge the upper bounds right away?
     }
 
-    private void addLowerBound(Type type) {
+    private boolean addLowerBound(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       if (lowerBounds == null) {
         lowerBounds = new LinkedHashSet<>();
       }
-      lowerBounds.add(type);
+      return lowerBounds.add(type);
       // TODO: Converge the lower bounds right away?
     }
 
@@ -1031,77 +1060,89 @@ public final class TypeResolver {
       return (constraint == null) ? null : constraint.get();
     }
 
-    public void add(TypeVariableKey key, Type type, ConstraintType constraintType) {
+    public boolean add(TypeVariableKey key, Type type, ConstraintType constraintType) {
       checkNotNull(key);
       checkNotNull(type);
       checkNotNull(constraintType);
-      internalAdd(key, type, constraintType);
-      for (Type bound : key.var.getBounds()) {
-        if (bound instanceof TypeVariable) {
-          TypeVariable<?> variableBound = (TypeVariable<?>) bound;
-          for (Type transitiveBound : variableBound.getBounds()) {
-            switch (constraintType) {
-              case EXACT_TYPE:
-                // key=B
-                // type=EXACT_TYPE
-                // to=Integer
-                // B == Integer
-                //
-                // boundVar=A
-                // B extends A
-                // -----> Integer extends A
-                // -----> Integer is a subtype of A
-                //
-                // same logic as UPPER_BOUND case
-                //
-                // (fallthrough)
-                //
-              case UPPER_BOUND:
-                // key=U
-                // type=UPPER_BOUND
-                // to=Integer
-                // "Integer is something that extends U"
-                // "Integer is a subtype of U"
-                //
-                // boundVar=T
-                // "U extends T"
-                // ----> "Integer is a subtype of T"
-                //
-                internalAdd(new TypeVariableKey(variableBound), type, ConstraintType.UPPER_BOUND);
-                break;
-              case LOWER_BOUND:
-                // key=U
-                // type=LOWER_BOUND
-                // to=Number
-                // "Number is something that is a supertype of U"
-                // "Number is a supertype of U"
-                // "U extends Number"
-                //
-                // boundVar=T
-                // "U extends T"
-                // "U is a subtype of T"
-                // "T is a supertype of U"
-                // anything we can conclude about T w.r.t Number?
-                // it can't be totally unrelated to Number, right?
-                // it has to be either a supertype of Number or a subtype of Number?
-                //   T=Integer works, T=Object works?, T=String doesn't work, right?
-                //         yes              yes          right
-                // so T is RELATED to Number
-                //
-                internalAdd(new TypeVariableKey(variableBound), type, ConstraintType.RELATED_TYPE);
-                break;
+      boolean result = internalAdd(key, type, constraintType);
+
+      // TODO: Is it ok we delete this?
+      //       and replaced it by calling populateTypeMappings on each of the key's bounds?
+      //       check especially the situation described in RELATED_TYPE case.
+      if (false) {
+        for (Type bound : key.var.getBounds()) {
+          if (bound instanceof TypeVariable) {
+            TypeVariable<?> variableBound = (TypeVariable<?>) bound;
+            for (Type transitiveBound : variableBound.getBounds()) {
+              switch (constraintType) {
+                case EXACT_TYPE:
+                  // key=B
+                  // type=EXACT_TYPE
+                  // to=Integer
+                  // B == Integer
+                  //
+                  // boundVar=A
+                  // B extends A
+                  // -----> Integer extends A
+                  // -----> Integer is a subtype of A
+                  //
+                  // same logic as UPPER_BOUND case
+                  //
+                  // (fallthrough)
+                  //
+                case UPPER_BOUND:
+                  // key=U
+                  // type=UPPER_BOUND
+                  // to=Integer
+                  // "Integer is something that extends U"
+                  // "Integer is a subtype of U"
+                  //
+                  // boundVar=T
+                  // "U extends T"
+                  // ----> "Integer is a subtype of T"
+                  //
+                  internalAdd(new TypeVariableKey(variableBound),
+                              type,
+                              ConstraintType.UPPER_BOUND);
+                  break;
+                case LOWER_BOUND:
+                  // key=U
+                  // type=LOWER_BOUND
+                  // to=Number
+                  // "Number is something that is a supertype of U"
+                  // "Number is a supertype of U"
+                  // "U extends Number"
+                  //
+                  // boundVar=T
+                  // "U extends T"
+                  // "U is a subtype of T"
+                  // "T is a supertype of U"
+                  // anything we can conclude about T w.r.t Number?
+                  // it can't be totally unrelated to Number, right?
+                  // it has to be either a supertype of Number or a subtype of Number?
+                  //   T=Integer works, T=Object works?, T=String doesn't work, right?
+                  //         yes              yes          right
+                  // so T is RELATED to Number
+                  //
+                  internalAdd(new TypeVariableKey(variableBound),
+                              type,
+                              ConstraintType.RELATED_TYPE);
+                  break;
+              }
             }
           }
         }
       }
+
       checkKeys();
+      return result;
     }
 
     private void checkKeys() {
       constraints.values().forEach(Constraint::get);
     }
 
-    private void internalAdd(TypeVariableKey key,
+    private boolean internalAdd(TypeVariableKey key,
                              Type type,
                              ConstraintType constraintType) {
       checkNotNull(key);
@@ -1110,17 +1151,13 @@ public final class TypeResolver {
       Constraint constraint = constraints.computeIfAbsent(key, k -> new Constraint(key));
       switch (constraintType) {
         case EXACT_TYPE:
-          constraint.addExactType(type);
-          return;
+          return constraint.addExactType(type);
         case RELATED_TYPE:
-          constraint.addRelatedType(type);
-          return;
+          return constraint.addRelatedType(type);
         case UPPER_BOUND:
-          constraint.addUpperBound(type);
-          return;
+          return constraint.addUpperBound(type);
         case LOWER_BOUND:
-          constraint.addLowerBound(type);
-          return;
+          return constraint.addLowerBound(type);
       }
       throw new AssertionError("Unknown constraint type " + constraintType);
     }
