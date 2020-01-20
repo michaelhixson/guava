@@ -685,7 +685,7 @@ public final class TypeResolver {
     private @Nullable Type exactType;
     private @Nullable Type relatedType;
     private @Nullable Set<Type> upperBounds;
-    private @Nullable Set<Type> lowerBounds;
+    private @Nullable Type lowerBound;
 
     Constraint(TypeVariableKey key) {
       this.key = checkNotNull(key);
@@ -695,7 +695,6 @@ public final class TypeResolver {
       // TODO: obviously this should be refactored
 
       Type upperBound = getUpperBound();
-      Type lowerBound = getLowerBound();
 
       if (exactType == null && relatedType == null && upperBound == null && lowerBound == null) {
         throw new IllegalStateException();
@@ -886,27 +885,6 @@ public final class TypeResolver {
       }
     }
 
-    private @Nullable Type getLowerBound() {
-      if (lowerBounds == null) {
-        return null;
-      }
-      Iterator<Type> iterator = lowerBounds.iterator();
-      Type lowest = iterator.next();
-      while (iterator.hasNext()) {
-        Type next = iterator.next();
-        if (TypeToken.of(lowest).isSubtypeOf(next)) {
-          continue;
-        }
-        if (TypeToken.of(next).isSubtypeOf(lowest)) {
-          lowest = next;
-          continue;
-        }
-        throw new IllegalArgumentException(
-            "No type that can conform to lower bounds " + lowerBounds + " for " + key);
-      }
-      return lowest;
-    }
-
     void add(Constraint other) {
       checkNotNull(other);
       if (other.exactType != null) {
@@ -918,8 +896,8 @@ public final class TypeResolver {
       if (other.upperBounds != null) {
         other.upperBounds.forEach(this::addUpperBound);
       }
-      if (other.lowerBounds != null) {
-        other.lowerBounds.forEach(this::addLowerBound);
+      if (other.lowerBound != null) {
+        addLowerBound(other.lowerBound);
       }
     }
 
@@ -978,11 +956,27 @@ public final class TypeResolver {
     private boolean addLowerBound(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
-      if (lowerBounds == null) {
-        lowerBounds = new LinkedHashSet<>();
+      if (type.equals(lowerBound)) {
+        return false;
       }
-      return lowerBounds.add(type);
-      // TODO: Converge the lower bounds right away?
+      if (lowerBound == null) {
+        lowerBound = type;
+        return true;
+      }
+      if (TypeToken.of(type).isSubtypeOf(lowerBound)) {
+        lowerBound = type;
+        return true;
+      }
+      if (TypeToken.of(lowerBound).isSubtypeOf(type)) {
+        return true;
+      }
+      throw new IllegalArgumentException(
+          "Type "
+              + key
+              + " must be a subtype of "
+              + lowerBound.getTypeName()
+              + ", so it cannot also be a subtype of "
+              + type.getTypeName());
     }
 
     private void checkNotMappedToSelf(Type type) {
