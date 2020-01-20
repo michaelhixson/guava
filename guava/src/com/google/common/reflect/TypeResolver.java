@@ -141,9 +141,7 @@ public final class TypeResolver {
             if (!(bound instanceof Class)) {
               populateTypeMappings(
                   mappings,
-                  (constraintType == ConstraintType.LOWER_BOUND)
-                      ? ConstraintType.RELATED_TYPE
-                      : ConstraintType.UPPER_BOUND,
+                  constraintTypeForBound(constraintType),
                   bound,
                   to);
             }
@@ -1041,75 +1039,6 @@ public final class TypeResolver {
       checkNotNull(type);
       checkNotNull(constraintType);
       boolean result = internalAdd(key, type, constraintType);
-
-      // TODO: Is it ok we delete this?
-      //       and replaced it by calling populateTypeMappings on each of the key's bounds?
-      //       check especially the situation described in RELATED_TYPE case.
-      if (false) {
-        for (Type bound : key.var.getBounds()) {
-          if (bound instanceof TypeVariable) {
-            TypeVariable<?> variableBound = (TypeVariable<?>) bound;
-            for (Type transitiveBound : variableBound.getBounds()) {
-              switch (constraintType) {
-                case EXACT_TYPE:
-                  // key=B
-                  // type=EXACT_TYPE
-                  // to=Integer
-                  // B == Integer
-                  //
-                  // boundVar=A
-                  // B extends A
-                  // -----> Integer extends A
-                  // -----> Integer is a subtype of A
-                  //
-                  // same logic as UPPER_BOUND case
-                  //
-                  // (fallthrough)
-                  //
-                case UPPER_BOUND:
-                  // key=U
-                  // type=UPPER_BOUND
-                  // to=Integer
-                  // "Integer is something that extends U"
-                  // "Integer is a subtype of U"
-                  //
-                  // boundVar=T
-                  // "U extends T"
-                  // ----> "Integer is a subtype of T"
-                  //
-                  internalAdd(new TypeVariableKey(variableBound),
-                              type,
-                              ConstraintType.UPPER_BOUND);
-                  break;
-                case LOWER_BOUND:
-                  // key=U
-                  // type=LOWER_BOUND
-                  // to=Number
-                  // "Number is something that is a supertype of U"
-                  // "Number is a supertype of U"
-                  // "U extends Number"
-                  //
-                  // boundVar=T
-                  // "U extends T"
-                  // "U is a subtype of T"
-                  // "T is a supertype of U"
-                  // anything we can conclude about T w.r.t Number?
-                  // it can't be totally unrelated to Number, right?
-                  // it has to be either a supertype of Number or a subtype of Number?
-                  //   T=Integer works, T=Object works?, T=String doesn't work, right?
-                  //         yes              yes          right
-                  // so T is RELATED to Number
-                  //
-                  internalAdd(new TypeVariableKey(variableBound),
-                              type,
-                              ConstraintType.RELATED_TYPE);
-                  break;
-              }
-            }
-          }
-        }
-      }
-
       checkKeys();
       return result;
     }
@@ -1119,8 +1048,8 @@ public final class TypeResolver {
     }
 
     private boolean internalAdd(TypeVariableKey key,
-                             Type type,
-                             ConstraintType constraintType) {
+                                Type type,
+                                ConstraintType constraintType) {
       checkNotNull(key);
       checkNotNull(type);
       checkNotNull(constraintType);
@@ -1154,5 +1083,78 @@ public final class TypeResolver {
                 });
           });
     }
+  }
+
+  private static ConstraintType constraintTypeForBound(ConstraintType constraintType) {
+    switch (constraintType) {
+      case EXACT_TYPE:
+        // key=B
+        // type=EXACT_TYPE
+        // to=Integer
+        // B == Integer
+        //
+        // boundVar=A
+        // B extends A
+        // -----> Integer extends A
+        // -----> Integer is a subtype of A
+        //
+        // same logic as UPPER_BOUND case
+        //
+        // (fallthrough)
+        //
+      case UPPER_BOUND:
+        // key=U
+        // type=UPPER_BOUND
+        // to=Integer
+        // "Integer is something that extends U"
+        // "Integer is a subtype of U"
+        //
+        // boundVar=T
+        // "U extends T"
+        // ----> "Integer is a subtype of T"
+        //
+        return ConstraintType.UPPER_BOUND;
+      case LOWER_BOUND:
+        // key=U
+        // type=LOWER_BOUND
+        // to=Number
+        // "Number is something that is a supertype of U"
+        // "Number is a supertype of U"
+        // "U extends Number"
+        //
+        // boundVar=T
+        // "U extends T"
+        // "U is a subtype of T"
+        // "T is a supertype of U"
+        // anything we can conclude about T w.r.t Number?
+        // it can't be totally unrelated to Number, right?
+        // it has to be either a supertype of Number or a subtype of Number?
+        //   T=Integer works, T=Object works?, T=String doesn't work, right?
+        //         yes              yes          right
+        // so T is RELATED to Number
+        //
+        return ConstraintType.RELATED_TYPE;
+      case RELATED_TYPE:
+        // TODO: Is this outcome possible?
+        //
+        // It seems like we can't conclude anything about the bound in this
+        // situation.
+        //
+        // key=A
+        // type=RELATED_TYPE
+        // to=Number
+        // "A extends Number or Number extends A"
+        //
+        // boundVar=B
+        // B extends A or A extends B
+        // ^ don't think it's possible to express this in the type system
+        //
+        // Could B be String?
+        // yes, if A is Object (Number extends A), and B extends A
+        // so B could have nothing to do with Number.
+        //
+        throw new IllegalArgumentException();
+    }
+    throw new AssertionError("Unknown constraint type " + constraintType);
   }
 }
