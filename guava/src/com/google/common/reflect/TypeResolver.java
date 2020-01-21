@@ -458,8 +458,6 @@ public final class TypeResolver {
           return captureAsTypeVariable(wildcardType.getUpperBounds());
         } else {
           // TODO(benyu): handle ? super T somehow.
-          System.out.println("UNHANDLED!!!");
-          //if (true) return captureAsTypeVariable(lowerBounds);
           return type;
         }
       }
@@ -576,7 +574,12 @@ public final class TypeResolver {
     /** The variable's type must be equal to the specified type. */
     EQUAL_TO,
 
-    /** The variable's type must either be a subtype or a supertype of the specified type. */
+    /**
+     * The variable's type must be related to the specified type.  Two types are
+     * related when it is possible for a third type to subtype both of those two
+     * types.
+     */
+    // TODO: Come up with a better name for this.
     RELATED_TO,
 
     /** The variable's type must be a subtype of the specified type. */
@@ -727,17 +730,14 @@ public final class TypeResolver {
     }
 
     private void checkPossibleToSubtypeBoth(Type a, Type b) {
-      checkNotNull(a, b);
+      checkNotNull(a);
+      checkNotNull(b);
       checkArgument(
-          (a instanceof Class && ((Class<?>) a).isInterface())
-              || (b instanceof Class && ((Class<?>) b).isInterface())
-              || TypeToken.of(a).isSubtypeOf(b)
-              || TypeToken.of(b).isSubtypeOf(a),
+          isPossibleToSubtypeBoth(a, b),
           "Type %s must be a subtype of %s, so it cannot also be a subtype of %s",
           key,
           a.getTypeName(),
           b.getTypeName());
-      System.out.println("It is possible for " + key + " to subtype both " + a + " and " + b);
     }
 
     private void checkEqualToAndRelatedTo(
@@ -746,14 +746,7 @@ public final class TypeResolver {
       if (equalTo == null || relatedTo == null) {
         return;
       }
-      checkArgument(
-          TypeToken.of(relatedTo).isSubtypeOf(equalTo)
-              || TypeToken.of(equalTo).isSubtypeOf(relatedTo),
-          "No type can satisfy the constraints of %s, "
-              + "which must be equal to %s and related to %s",
-          key,
-          equalTo.getTypeName(),
-          relatedTo.getTypeName());
+      checkPossibleToSubtypeBoth(relatedTo, equalTo);
     }
 
     private void checkEqualToAndSubtypeOf(
@@ -797,14 +790,7 @@ public final class TypeResolver {
         return;
       }
       for (Type type : subtypeOf) {
-        checkArgument(
-            TypeToken.of(relatedTo).isSubtypeOf(type)
-                || TypeToken.of(type).isSubtypeOf(relatedTo),
-            "No type can satisfy the constraints of %s, "
-                + "which must be related to %s and a subtype of %s",
-            key,
-            relatedTo.getTypeName(),
-            type.getTypeName());
+        checkPossibleToSubtypeBoth(relatedTo, type);
       }
     }
 
@@ -815,14 +801,7 @@ public final class TypeResolver {
         return;
       }
       for (Type type : supertypeOf) {
-        checkArgument(
-            TypeToken.of(relatedTo).isSubtypeOf(type)
-                || TypeToken.of(type).isSubtypeOf(relatedTo),
-            "No type can satisfy the constraints of %s, "
-                + "which must be related to %s and a supertype of %s",
-            key,
-            relatedTo.getTypeName(),
-            type.getTypeName());
+        checkPossibleToSubtypeBoth(relatedTo, type);
       }
     }
 
@@ -965,20 +944,17 @@ public final class TypeResolver {
           if (!(to instanceof WildcardType)) {
             for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
               if (!(fromLowerBound instanceof Class)) {
-                System.out.println("wildcard " + fromWildcardType + " has lower bound " + fromLowerBound + " which must be a subtype of " + to);
                 populate(fromLowerBound, ConstraintKind.SUBTYPE_OF, to);
               }
             }
             for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
               if (!(fromUpperBound instanceof Class)) {
-                System.out.println("wildcard " + fromWildcardType + " has upper bound " + fromUpperBound + " which must be a supertype of " + to);
                 populate(fromUpperBound, ConstraintKind.SUPERTYPE_OF, to);
               }
             }
             return;
           }
           WildcardType toWildcardType = (WildcardType) to;
-          System.out.println("just curious, what's this? " + WildcardCapturer.INSTANCE.capture(toWildcardType));
           Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
           Type[] toUpperBounds = toWildcardType.getUpperBounds();
           Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
@@ -989,13 +965,11 @@ public final class TypeResolver {
               "Incompatible type: %s vs. %s",
               fromWildcardType,
               to);
-          for (int i = 0; i < fromUpperBounds.length; i++) {
-            System.out.println("wildcard " + fromWildcardType + " has upper bound " + fromUpperBounds[i] + " which must be a supertype of " + toUpperBounds[i]);
-            populate(fromUpperBounds[i], ConstraintKind.SUPERTYPE_OF, toUpperBounds[i]);
-          }
           for (int i = 0; i < fromLowerBounds.length; i++) {
-            System.out.println("wildcard " + fromWildcardType + " has lower bound " + fromLowerBounds[i] + " which must be a subtype of " + toLowerBounds[i]);
             populate(fromLowerBounds[i], ConstraintKind.SUBTYPE_OF, toLowerBounds[i]);
+          }
+          for (int i = 0; i < fromUpperBounds.length; i++) {
+            populate(fromUpperBounds[i], ConstraintKind.SUPERTYPE_OF, toUpperBounds[i]);
           }
         }
 
@@ -1009,6 +983,7 @@ public final class TypeResolver {
             populate(fromParameterizedType.getActualTypeArguments()[0], ConstraintKind.EQUAL_TO, to);
             return;
           }
+          // TODO: Forgive the IllegalArgumentExceptions below when kind=RELATED_TO?
           ParameterizedType toParameterizedType;
           if (to instanceof Class) {
             // from=Comparable<? super T>, to=Integer
@@ -1019,7 +994,10 @@ public final class TypeResolver {
           }
           if (fromParameterizedType.getOwnerType() != null
               && toParameterizedType.getOwnerType() != null) {
-            populate(fromParameterizedType.getOwnerType(), ConstraintKind.EQUAL_TO, toParameterizedType.getOwnerType());
+            populate(
+                fromParameterizedType.getOwnerType(),
+                ConstraintKind.EQUAL_TO,
+                toParameterizedType.getOwnerType());
           }
           checkArgument(
               ((Class<?>) fromParameterizedType.getRawType())
@@ -1052,6 +1030,15 @@ public final class TypeResolver {
         @Override
         void visitClass(Class<?> fromClass) {
           if (to instanceof WildcardType) {
+            WildcardType toWildcardType = (WildcardType) to;
+            for (Type toLowerBound : toWildcardType.getLowerBounds()) {
+              checkArgument(
+                  isPossibleToSubtypeBoth(fromClass, toLowerBound),
+                  "Type %s is incompatible with lower bound %s of wildcard type %s",
+                  fromClass.getTypeName(),
+                  toLowerBound.getTypeName(),
+                  toWildcardType.getTypeName());
+            }
             return; // Okay to say Foo is <?>
           }
           // Can't map from a raw class to anything other than itself or a wildcard.
@@ -1081,13 +1068,16 @@ public final class TypeResolver {
 
     private void setAll(Constraints that) {
       checkNotNull(that);
-      seen.addAll(that.seen);
+      this.seen.addAll(that.seen);
       that.constraints.forEach(
-          (key, constraint) ->
-              constraints.merge(
-                  key,
-                  constraint,
-                  (c1, c2) -> { c1.set(c2); return c1; }));
+          (key, thatConstraint) -> {
+            Constraint thisConstraint = this.constraints.get(key);
+            if (thisConstraint == null) {
+              thisConstraint = new Constraint(key);
+              this.constraints.put(key, thisConstraint);
+            }
+            thisConstraint.set(thatConstraint);
+          });
     }
 
     static Constraints combine(Constraints a, Constraints b) {
@@ -1140,6 +1130,15 @@ public final class TypeResolver {
     } catch (ClassCastException e) {
       throw new IllegalArgumentException(arg + " is not a " + type.getSimpleName());
     }
+  }
+
+  private static boolean isPossibleToSubtypeBoth(Type a, Type b) {
+    checkNotNull(a);
+    checkNotNull(b);
+    return (a instanceof Class && ((Class<?>) a).isInterface())
+        || (b instanceof Class && ((Class<?>) b).isInterface())
+        || TypeToken.of(a).isSubtypeOf(b)
+        || TypeToken.of(b).isSubtypeOf(a);
   }
 
   private static ConstraintKind constraintKindForBound(ConstraintKind kind) {
