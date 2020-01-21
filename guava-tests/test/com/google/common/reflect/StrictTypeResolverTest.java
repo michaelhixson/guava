@@ -8,7 +8,9 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
 import java.io.Serializable;
+import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
+import java.lang.reflect.Member;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
@@ -474,18 +476,72 @@ public final class StrictTypeResolverTest {
   public void convergeLowerBoundsBad() throws Exception {
     Method method = StrictTypeResolverTest.class.getMethod("convergeLowerBounds", Consumer.class, Consumer.class);
 
+    class Foo {}
+    class SubFoo extends Foo {}
+    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? super SubFoo>) any -> {});
+
+    // FIXME: wildcard capture needs to be involved somehow.
     try {
-        new TypeResolver()
-            .where(
-                method.getGenericParameterTypes()[0],
-                new TypeCapture<Consumer<String>>() {}.capture())
-            .where(
-                method.getGenericParameterTypes()[1],
-                new TypeCapture<Consumer<Integer>>() {}.capture());
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Consumer<Foo>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[1],
+              // T ---> capture of ? super SubFoo
+              new TypeCapture<Consumer<? super SubFoo>>() {}.capture());
       fail();
     } catch (IllegalArgumentException expected) {}
 
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Consumer<String>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[1],
+              new TypeCapture<Consumer<Integer>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Consumer<List<String>>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[1],
+              new TypeCapture<Consumer<List<Integer>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Consumer<List<String>>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[1],
+              new TypeCapture<Consumer<List<Integer>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Consumer<Foo>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[1],
+              new TypeCapture<Consumer<? extends SubFoo>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    // Why? Does it know they're final?
     //convergeLowerBounds((Consumer<String>) any -> {}, (Consumer<Integer>) any -> {});
+    //convergeLowerBounds((Consumer<List<Foo>>) any -> {}, (Consumer<List<Bar>>) any -> {});
+    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? extends SubFoo>) any -> {});
+    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? super SubFoo>) any -> {});
   }
 
   @Test
@@ -1116,4 +1172,152 @@ public final class StrictTypeResolverTest {
   }
 
   public static <T> List<? super T> superOfWildcard(List<T> a) { return null; }
+
+  @Test
+  public void typeChain2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("typeChain2", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Number>>() {}.capture());
+
+    assertEquals(
+        new TypeCapture<List<? super Number>>() {}.capture(),
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        Object.class,
+        resolver.resolveType(method.getGenericReturnType()));
+
+    typeChain2(new ArrayList<Number>());
+  }
+
+  public static <A, B extends A, C extends B> A typeChain2(List<? super C> a) { return null; }
+
+  @Test
+  public void canAccess() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("canAccess", AccessibleObject.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                Method.class);
+
+    assertEquals(
+        Method.class,
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        Method.class,
+        resolver.resolveType(method.getGenericReturnType()));
+
+    canAccess(method);
+  }
+
+  public static <T extends AccessibleObject & Member> T canAccess(T a) { return null; }
+
+  @Test
+  public void canAccess2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("canAccess2", Consumer.class, Consumer.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Consumer<AccessibleObject>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Consumer<Member>>() {}.capture());
+
+    assertEquals(
+        Types.newParameterizedType(
+            Consumer.class,
+            new Types.WildcardTypeImpl(
+                new Type[] {
+                    AccessibleObject.class,
+                    Member.class
+                },
+                new Type[] { Object.class })),
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        Types.newParameterizedType(
+            Consumer.class,
+            new Types.WildcardTypeImpl(
+                new Type[] {
+                    AccessibleObject.class,
+                    Member.class
+                },
+                new Type[] { Object.class })),
+        resolver.resolveType(method.getGenericParameterTypes()[1]));
+
+    assertEquals(
+        new Types.WildcardTypeImpl(
+            new Type[0],
+            new Type[] {
+                AccessibleObject.class,
+                Member.class
+            }),
+        resolver.resolveType(method.getGenericReturnType()));
+
+    canAccess2((Consumer<AccessibleObject>) any -> {}, (Consumer<Member>) any -> {});
+  }
+
+  public static <T> T canAccess2(Consumer<? super T> a, Consumer<? super T> b) { return null; }
+
+  @Test
+  public void canAccess3() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("canAccess3", List.class, List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Field>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Method>>() {}.capture());
+
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            new Types.WildcardTypeImpl(
+                new Type[0],
+                new Type[] {
+                    AccessibleObject.class,
+                    Member.class
+                })),
+        resolver.resolveType(method.getGenericParameterTypes()[0]));
+
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            new Types.WildcardTypeImpl(
+                new Type[0],
+                new Type[] {
+                    AccessibleObject.class,
+                    Member.class
+                })),
+        resolver.resolveType(method.getGenericParameterTypes()[1]));
+
+    assertEquals(
+        new Types.WildcardTypeImpl(
+            new Type[0],
+            new Type[] {
+                AccessibleObject.class,
+                Member.class
+            }),
+        resolver.resolveType(method.getGenericReturnType()));
+
+    Method m = null;
+    Field f = null;
+    canAccess3(
+        (List<Field>) Collections.singletonList(f),
+        (List<Method>) Collections.singletonList(m));
+  }
+
+  public static <T extends AccessibleObject & Member> T canAccess3(List<? extends T> a, List<? extends T> b) { return null; }
 }
