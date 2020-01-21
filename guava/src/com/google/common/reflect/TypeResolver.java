@@ -28,12 +28,12 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.StringJoiner;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
@@ -136,7 +136,8 @@ public final class TypeResolver {
     new TypeVisitor() {
       @Override
       void visitTypeVariable(TypeVariable<?> typeVariable) {
-        if (mappings.add(new TypeVariableKey(typeVariable), to, constraintType)) {
+        TypeVariableKey key = new TypeVariableKey(typeVariable);
+        if (mappings.add(key, to, constraintType)) {
           for (Type bound : typeVariable.getBounds()) {
             if (!(bound instanceof Class)) {
               populateTypeMappings(
@@ -144,6 +145,10 @@ public final class TypeResolver {
                   constraintTypeForBound(constraintType),
                   bound,
                   to);
+            } else if (!bound.equals(Object.class)) {
+              // The Object.class bound is redundant, and it causes problems
+              // when binding T[] to int[].
+              mappings.add(key, bound, ConstraintType.LOWER_BOUND);
             }
           }
         }
@@ -205,6 +210,7 @@ public final class TypeResolver {
           return; // Okay to say Foo<A> is <?>
         }
         if (to instanceof Class && fromParameterizedType.getRawType().equals(Class.class)) {
+          // from=Class<K extends Enum<K>>, to=java.util.concurrent.TimeUnit
           populateTypeMappings(
               mappings,
               ConstraintType.EXACT_TYPE,
@@ -214,10 +220,9 @@ public final class TypeResolver {
         }
         ParameterizedType toParameterizedType;
         if (to instanceof Class) {
-          toParameterizedType =
-              expectArgument(
-                  ParameterizedType.class,
-                  TypeToken.of(to).getSupertype((Class) fromParameterizedType.getRawType()).getType());
+          // from=Comparable<? super T>, to=Integer
+          Type supertype = getSupertype(to, (Class<?>) fromParameterizedType.getRawType());
+          toParameterizedType = expectArgument(ParameterizedType.class, supertype);
         } else {
           toParameterizedType = expectArgument(ParameterizedType.class, to);
         }
@@ -316,7 +321,69 @@ public final class TypeResolver {
   private WildcardType resolveWildcardType(WildcardType type) {
     Type[] lowerBounds = type.getLowerBounds();
     Type[] upperBounds = type.getUpperBounds();
-    return new Types.WildcardTypeImpl(resolveTypes(lowerBounds), resolveTypes(upperBounds));
+    return new Types.WildcardTypeImpl(
+        flattenLowerBounds(resolveTypes(lowerBounds)),
+        flattenUpperBounds(resolveTypes(upperBounds)));
+  }
+
+  private static Type[] flattenLowerBounds(Type[] lowerBounds) {
+    Set<Type> flat = null;
+    for (int i = 0; i < lowerBounds.length; i++) {
+      Type type = lowerBounds[i];
+      if (!(type instanceof WildcardType)) {
+        if (flat != null) {
+          flat.add(type);
+        }
+        continue;
+      }
+      WildcardType nested = (WildcardType) type;
+      Type[] nestedLowerBounds = nested.getLowerBounds();
+      Type[] nestedUpperBounds = nested.getUpperBounds();
+      if (flat == null) {
+        flat = new LinkedHashSet<>(Arrays.asList(lowerBounds).subList(0, i));
+      }
+      // ? super ? ---> ? super Object
+      if (nestedLowerBounds.length == 0) {
+        if ((nestedUpperBounds.length == 1 && nestedUpperBounds[0].equals(Object.class))
+            || nestedUpperBounds.length == 0) {
+          // TODO: Is this case possible?
+          flat.add(Object.class);
+          continue;
+        }
+      }
+      // ? super ? super Number ---> ? super Number
+      Collections.addAll(flat, nestedLowerBounds);
+      // ? super ? extends Number ---> ? super Number
+      for (Type nestedUpperBound : nestedUpperBounds) {
+        if (!nestedUpperBound.equals(Object.class)) {
+          flat.add(nestedUpperBound);
+        }
+      }
+    }
+    return (flat == null) ? lowerBounds : flat.toArray(new Type[0]);
+  }
+
+  private static Type[] flattenUpperBounds(Type[] upperBounds) {
+    Set<Type> flat = null;
+    for (int i = 0; i < upperBounds.length; i++) {
+      Type type = upperBounds[i];
+      if (!(type instanceof WildcardType)) {
+        if (flat != null) {
+          flat.add(type);
+        }
+        continue;
+      }
+      WildcardType nested = (WildcardType) type;
+      if (flat == null) {
+        flat = new LinkedHashSet<>(Arrays.asList(upperBounds).subList(0, i));
+      }
+      // ? extends ? super Number ---> ? extends Object
+      // This is already implied, so no action is required.
+      //
+      // ? extends ? extends Number ---> ? extends Number
+      Collections.addAll(flat, nested.getUpperBounds());
+    }
+    return (flat == null) ? upperBounds : flat.toArray(new Type[0]);
   }
 
   private Type resolveGenericArrayType(GenericArrayType type) {
@@ -342,6 +409,11 @@ public final class TypeResolver {
     } catch (ClassCastException e) {
       throw new IllegalArgumentException(arg + " is not a " + type.getSimpleName());
     }
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private static Type getSupertype(Type type, Class<?> superclass) {
+    return TypeToken.of(type).getSupertype((Class) superclass).getType();
   }
 
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
@@ -675,8 +747,6 @@ public final class TypeResolver {
   enum ConstraintType { EXACT_TYPE, RELATED_TYPE, UPPER_BOUND, LOWER_BOUND }
 
   static final class Constraint {
-    private static final boolean REPRESENT_INTERSECTION_TYPES_AS_TYPE_VARIABLES = true;
-
     private final TypeVariableKey key;
     private @Nullable Type exactType;
     private @Nullable Type relatedType;
@@ -699,7 +769,7 @@ public final class TypeResolver {
         return exactType;
       }
       if (exactType == null && lowerBound == null && upperBound == null) {
-        return relatedType; // TODO: is this possible?
+        return Object.class;
       }
       if (exactType == null && relatedType == null && lowerBound == null) {
         return upperBound;
@@ -755,9 +825,7 @@ public final class TypeResolver {
             key,
             relatedType.getTypeName(),
             lowerBound.getTypeName());
-        return TypeToken.of(relatedType).isSubtypeOf(lowerBound)
-            ? relatedType
-            : lowerBound;
+        return lowerBound;
       }
       if (exactType == null && relatedType == null) {
         checkArgument(
@@ -864,21 +932,9 @@ public final class TypeResolver {
       if (supertypes.size() == 1) {
         return supertypes.iterator().next();
       }
-      // TODO: Which approach is better?
-      if (REPRESENT_INTERSECTION_TYPES_AS_TYPE_VARIABLES) {
-        StringJoiner intersectionTypeName = new StringJoiner(" & ");
-        for (Type supertype : supertypes) {
-          intersectionTypeName.add(supertype.getTypeName());
-        }
-        return Types.newArtificialTypeVariable(
-            TypeVariable.class,
-            intersectionTypeName.toString(),
-            supertypes.toArray(new Type[0]));
-      } else {
-        return new Types.WildcardTypeImpl(
-            new Type[0],
-            supertypes.toArray(new Type[0]));
-      }
+      return new Types.WildcardTypeImpl(
+          new Type[0],
+          supertypes.toArray(new Type[0]));
     }
 
     void add(Constraint other) {
