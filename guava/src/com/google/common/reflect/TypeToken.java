@@ -26,6 +26,7 @@ import com.google.common.collect.FluentIterable;
 import com.google.common.collect.ForwardingSet;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.common.primitives.Primitives;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
@@ -41,7 +42,6 @@ import java.lang.reflect.WildcardType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -876,9 +876,6 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
   }
 
   private boolean someRawTypeIsSubclassOf(Class<?> superclass) {
-    if (runtimeType instanceof Class && superclass.equals(Class.class)) {
-      return true;
-    }
     for (Class<?> rawType : getRawTypes()) {
       if (superclass.isAssignableFrom(rawType)) {
         return true;
@@ -891,11 +888,6 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
     Class<?> matchedClass = of(supertype).getRawType();
     if (!someRawTypeIsSubclassOf(matchedClass)) {
       return false;
-    }
-    if (runtimeType instanceof Class && matchedClass.equals(Class.class)) {
-      Type[] supertypeArgs = supertype.getActualTypeArguments();
-      Type supertypeClassType = supertypeArgs[0];
-      return isSubtypeOf(supertypeClassType);
     }
     TypeVariable<?>[] typeVars = matchedClass.getTypeParameters();
     Type[] supertypeArgs = supertype.getActualTypeArguments();
@@ -1368,7 +1360,7 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
 
     ImmutableList<K> collectTypes(Iterable<? extends K> types) {
       // type -> order number. 1 for Object, 2 for anything directly below, so on so forth.
-      Map<K, Integer> map = new LinkedHashMap<>();
+      Map<K, Integer> map = Maps.newHashMap();
       for (K type : types) {
         collectTypes(type, map);
       }
