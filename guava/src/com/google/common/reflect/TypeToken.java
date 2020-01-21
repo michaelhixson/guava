@@ -221,13 +221,13 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
    * @param typeArg the actual type to substitute
    */
   public final <X> TypeToken<T> where(TypeParameter<X> typeParam, TypeToken<X> typeArg) {
-    TypeResolver.Constraints mappings = new TypeResolver.Constraints();
-    mappings.add(
-        new TypeResolver.TypeVariableKey(typeParam.typeVariable),
-        typeArg.runtimeType,
-        TypeResolver.ConstraintType.EXACT_TYPE);
-    TypeResolver resolver = new TypeResolver().where(mappings);
-    // If there's any type error, we'd report now rather than later.
+    checkNotNull(typeParam);
+    checkNotNull(typeArg);
+    checkArgument(
+        !typeParam.typeVariable.equals(typeArg.runtimeType),
+        "Type variable %s bound to itself",
+        typeParam.typeVariable);
+    TypeResolver resolver = new TypeResolver().where(typeParam.typeVariable, typeArg.runtimeType);
     return new SimpleTypeToken<T>(resolver.resolveType(runtimeType));
   }
 
