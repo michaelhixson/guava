@@ -120,8 +120,8 @@ public final class TypeResolver {
     return where(mappings);
   }
 
-  /** Returns a new {@code TypeResolver} with {@code variable} mapping to {@code type}. */
-  TypeResolver where(Constraints mappings) {
+  /** Returns a new {@code TypeResolver} with the additional specified {@code mappings}. */
+  private TypeResolver where(Constraints mappings) {
     return new TypeResolver(typeTable.where(mappings));
   }
 
@@ -690,7 +690,7 @@ public final class TypeResolver {
    * List<A extends String>}, we need to compare that {@code <A extends B>} is unequal to {@code <A
    * extends String>} in order to decide to use the transformed type instead of the original type.
    */
-  static final class TypeVariableKey {
+  private static final class TypeVariableKey {
     private final TypeVariable<?> var;
 
     TypeVariableKey(TypeVariable<?> var) {
@@ -744,9 +744,9 @@ public final class TypeResolver {
     }
   }
 
-  enum ConstraintType { EXACT_TYPE, RELATED_TYPE, UPPER_BOUND, LOWER_BOUND }
+  private enum ConstraintType { EXACT_TYPE, RELATED_TYPE, LOWER_BOUND, UPPER_BOUND }
 
-  static final class Constraint {
+  private static final class Constraint {
     private final TypeVariableKey key;
     private @Nullable Type exactType;
     private @Nullable Type relatedType;
@@ -1069,7 +1069,7 @@ public final class TypeResolver {
     }
   }
 
-  static final class Constraints {
+  private static final class Constraints {
     public static Constraints combine(Constraints a, Constraints b) {
       checkNotNull(a);
       checkNotNull(b);
