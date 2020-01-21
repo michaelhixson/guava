@@ -22,6 +22,7 @@ import static java.util.Arrays.asList;
 import com.google.common.annotations.Beta;
 import com.google.common.base.Joiner;
 import com.google.common.base.Objects;
+import com.google.common.collect.ImmutableSet;
 import java.lang.reflect.GenericArrayType;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
@@ -750,44 +751,172 @@ public final class TypeResolver {
     private final TypeVariableKey key;
     private @Nullable Type exactType;
     private @Nullable Type relatedType;
-    private @Nullable Set<Type> upperBounds;
     private @Nullable Type lowerBound;
+    private @Nullable Set<Type> upperBounds;
 
     Constraint(TypeVariableKey key) {
       this.key = checkNotNull(key);
     }
 
-    public Type get() {
-      // TODO: obviously this should be refactored
-
-      Type upperBound = getUpperBound();
-
-      if (exactType == null && relatedType == null && upperBound == null && lowerBound == null) {
-        throw new IllegalStateException();
-      }
-      if (relatedType == null && upperBound == null && lowerBound == null) {
+    Type get() {
+      if (exactType != null) {
         return exactType;
       }
-      if (exactType == null && lowerBound == null && upperBound == null) {
-        return Object.class;
+      if (upperBounds != null) {
+        return mergeUpperBounds(upperBounds);
       }
-      if (exactType == null && relatedType == null && lowerBound == null) {
-        return upperBound;
-      }
-      if (exactType == null && relatedType == null && upperBound == null) {
+      if (lowerBound != null) {
         return lowerBound;
       }
-      if (upperBound == null && lowerBound == null) {
-        checkArgument(
-            TypeToken.of(relatedType).isSubtypeOf(exactType) || TypeToken.of(exactType).isSubtypeOf(relatedType),
-            "No type can satisfy the constraints of %s, "
-                + "which must be %s and related to %s",
-            key,
-            exactType.getTypeName(),
-            relatedType.getTypeName());
-        return exactType;
+      if (relatedType != null) {
+        return Object.class;
       }
-      if (relatedType == null && lowerBound == null) {
+      throw new IllegalStateException();
+    }
+
+    void add(Constraint other) {
+      checkNotNull(other);
+      if (other.exactType != null) {
+        addExactType(other.exactType);
+      }
+      if (other.relatedType != null) {
+        addRelatedType(other.relatedType);
+      }
+      if (other.lowerBound != null) {
+        addLowerBound(other.lowerBound);
+      }
+      if (other.upperBounds != null) {
+        other.upperBounds.forEach(this::addUpperBound);
+      }
+    }
+
+    void add(Type type, ConstraintType constraintType) {
+      checkNotNull(type);
+      checkNotNull(constraintType);
+      switch (constraintType) {
+        case EXACT_TYPE:
+          addExactType(type);
+          return;
+        case RELATED_TYPE:
+          addRelatedType(type);
+          return;
+        case LOWER_BOUND:
+          addLowerBound(type);
+          return;
+        case UPPER_BOUND:
+          addUpperBound(type);
+          return;
+      }
+      throw new AssertionError("Unknown constraint type " + constraintType);
+    }
+
+    private void addExactType(Type type) {
+      checkNotNull(type);
+      checkNotMappedToSelf(type);
+      checkExactTypeAndRelatedType(type, relatedType);
+      checkExactTypeAndLowerBound(type, lowerBound);
+      checkExactTypeAndUpperBounds(type, upperBounds);
+      if (exactType == null) {
+        exactType = type;
+        return;
+      }
+      checkArgument(
+          exactType.equals(type),
+          "Type %s must be exactly %s, so it cannot be %s",
+          key,
+          exactType.getTypeName(),
+          type.getTypeName());
+    }
+
+    private void addRelatedType(Type type) {
+      checkNotNull(type);
+      checkNotMappedToSelf(type);
+      checkExactTypeAndRelatedType(exactType, type);
+      checkRelatedTypeAndLowerBound(type, lowerBound);
+      checkRelatedTypeAndUpperBounds(type, upperBounds);
+      if (relatedType == null || TypeToken.of(type).isSubtypeOf(relatedType)) {
+        relatedType = type;
+        return;
+      }
+      checkArgument(
+          TypeToken.of(relatedType).isSubtypeOf(type),
+          "Type %s must be related to %s, so it cannot also be related to %s",
+          key,
+          relatedType.getTypeName(),
+          type.getTypeName());
+    }
+
+    private void addLowerBound(Type type) {
+      checkNotNull(type);
+      checkNotMappedToSelf(type);
+      checkExactTypeAndLowerBound(exactType, type);
+      checkRelatedTypeAndLowerBound(relatedType, type);
+      checkLowerBoundAndUpperBounds(type, upperBounds);
+      if (lowerBound == null || TypeToken.of(type).isSubtypeOf(lowerBound)) {
+        lowerBound = type;
+        return;
+      }
+      checkArgument(
+          TypeToken.of(lowerBound).isSubtypeOf(type),
+          "Type %s must be a subtype of %s, so it cannot also be a subtype of %s",
+          key,
+          lowerBound.getTypeName(),
+          type.getTypeName());
+    }
+
+    private void addUpperBound(Type type) {
+      checkNotNull(type);
+      checkNotMappedToSelf(type);
+      // No need to re-check the other upper bounds.
+      ImmutableSet<Type> newUpperBounds = ImmutableSet.of(type);
+      checkExactTypeAndUpperBounds(exactType, newUpperBounds);
+      checkRelatedTypeAndUpperBounds(relatedType, newUpperBounds);
+      checkLowerBoundAndUpperBounds(lowerBound, newUpperBounds);
+      if (upperBounds == null) {
+        upperBounds = new LinkedHashSet<>();
+      }
+      upperBounds.add(type);
+    }
+
+    private void checkNotMappedToSelf(Type type) {
+      checkArgument(
+          !key.equalsType(type),
+          "Type variable %s bound to itself",
+          key);
+    }
+
+    private void checkExactTypeAndRelatedType(@Nullable Type exactType, @Nullable Type relatedType) {
+      if (exactType == null || relatedType == null) {
+        return;
+      }
+      checkArgument(
+          TypeToken.of(relatedType).isSubtypeOf(exactType)
+              || TypeToken.of(exactType).isSubtypeOf(relatedType),
+          "No type can satisfy the constraints of %s, "
+              + "which must be %s and related to %s",
+          key,
+          exactType.getTypeName(),
+          relatedType.getTypeName());
+    }
+
+    private void checkExactTypeAndLowerBound(@Nullable Type exactType, @Nullable Type lowerBound) {
+      if (exactType == null || lowerBound == null) {
+        return;
+      }
+      checkArgument(
+          TypeToken.of(exactType).isSubtypeOf(lowerBound),
+          "No type can satisfy the constraints of %s, "
+              + "which must be %s and a subtype of %s",
+          key,
+          exactType.getTypeName(),
+          lowerBound.getTypeName());
+    }
+
+    private void checkExactTypeAndUpperBounds(@Nullable Type exactType, @Nullable Set<Type> upperBounds) {
+      if (exactType == null || upperBounds == null) {
+        return;
+      }
+      for (Type upperBound : upperBounds) {
         checkArgument(
             TypeToken.of(exactType).isSupertypeOf(upperBound),
             "No type can satisfy the constraints of %s, "
@@ -795,39 +924,44 @@ public final class TypeResolver {
             key,
             exactType.getTypeName(),
             upperBound.getTypeName());
-        return exactType;
       }
-      if (relatedType == null && upperBound == null) {
-        checkArgument(
-            TypeToken.of(exactType).isSubtypeOf(lowerBound),
-            "No type can satisfy the constraints of %s, "
-                + "which must be %s and a subtype of %s",
-            key,
-            exactType.getTypeName(),
-            lowerBound.getTypeName());
-        return exactType;
+    }
+
+    private void checkRelatedTypeAndLowerBound(@Nullable Type relatedType, @Nullable Type lowerBound) {
+      if (relatedType == null || lowerBound == null) {
+        return;
       }
-      if (exactType == null && lowerBound == null) {
+      checkArgument(
+          TypeToken.of(relatedType).isSubtypeOf(lowerBound)
+              || TypeToken.of(lowerBound).isSubtypeOf(relatedType),
+          "No type can satisfy the constraints of %s, "
+              + "which must be related to %s and a subtype of %s",
+          key,
+          relatedType.getTypeName(),
+          lowerBound.getTypeName());
+    }
+
+    private void checkRelatedTypeAndUpperBounds(@Nullable Type relatedType, @Nullable Set<Type> upperBounds) {
+      if (relatedType == null || upperBounds == null) {
+        return;
+      }
+      for (Type upperBound : upperBounds) {
         checkArgument(
-            TypeToken.of(relatedType).isSubtypeOf(upperBound) || TypeToken.of(upperBound).isSubtypeOf(relatedType),
+            TypeToken.of(relatedType).isSubtypeOf(upperBound)
+                || TypeToken.of(upperBound).isSubtypeOf(relatedType),
             "No type can satisfy the constraints of %s, "
                 + "which must be related to %s and a supertype of %s",
             key,
             relatedType.getTypeName(),
             upperBound.getTypeName());
-        return upperBound; // TODO: is this right?
       }
-      if (exactType == null && upperBound == null) {
-        checkArgument(
-            TypeToken.of(relatedType).isSubtypeOf(lowerBound) || TypeToken.of(lowerBound).isSubtypeOf(relatedType),
-            "No type can satisfy the constraints of %s, "
-                + "which must be related to %s and a subtype of %s",
-            key,
-            relatedType.getTypeName(),
-            lowerBound.getTypeName());
-        return lowerBound;
+    }
+
+    private void checkLowerBoundAndUpperBounds(@Nullable Type lowerBound, @Nullable Set<Type> upperBounds) {
+      if (lowerBound == null || upperBounds == null) {
+        return;
       }
-      if (exactType == null && relatedType == null) {
+      for (Type upperBound : upperBounds) {
         checkArgument(
             TypeToken.of(lowerBound).isSupertypeOf(upperBound),
             "No type can satisfy the constraints of %s, "
@@ -835,80 +969,11 @@ public final class TypeResolver {
             key,
             lowerBound.getTypeName(),
             upperBound.getTypeName());
-        return upperBound; // TODO: is this right?
       }
-      if (lowerBound == null) {
-        checkArgument(
-            (TypeToken.of(relatedType).isSubtypeOf(exactType) || TypeToken.of(exactType).isSubtypeOf(relatedType))
-                && (TypeToken.of(relatedType).isSubtypeOf(upperBound) || TypeToken.of(upperBound).isSubtypeOf(relatedType))
-                && TypeToken.of(exactType).isSupertypeOf(upperBound),
-            "No type can satisfy the constraints of %s, "
-                + "which must be %s, related to %s, and a supertype of %s",
-            key,
-            exactType.getTypeName(),
-            relatedType.getTypeName(),
-            upperBound.getTypeName());
-        return exactType;
-      }
-      if (upperBound == null) {
-        checkArgument(
-            (TypeToken.of(relatedType).isSubtypeOf(exactType) || TypeToken.of(exactType).isSubtypeOf(relatedType))
-                && (TypeToken.of(relatedType).isSubtypeOf(lowerBound) || TypeToken.of(lowerBound).isSubtypeOf(relatedType))
-                && TypeToken.of(exactType).isSubtypeOf(lowerBound),
-            "No type can satisfy the constraints of %s, "
-                + "which must be %s, related to %s, and a subtype of %s",
-            key,
-            exactType.getTypeName(),
-            relatedType.getTypeName(),
-            lowerBound.getTypeName());
-        return exactType;
-      }
-      if (relatedType == null) {
-        checkArgument(
-            TypeToken.of(exactType).isSubtypeOf(lowerBound)
-                && TypeToken.of(exactType).isSupertypeOf(upperBound)
-                && TypeToken.of(lowerBound).isSupertypeOf(upperBound),
-            "No type can satisfy the constraints of %s, "
-                + "which must be %s, a subtype of %s, and a supertype of %s",
-            key,
-            exactType.getTypeName(),
-            lowerBound.getTypeName(),
-            upperBound.getTypeName());
-        return exactType;
-      }
-      if (exactType == null) {
-        checkArgument(
-            (TypeToken.of(relatedType).isSubtypeOf(lowerBound) || TypeToken.of(lowerBound).isSubtypeOf(relatedType))
-                && (TypeToken.of(relatedType).isSubtypeOf(upperBound) || TypeToken.of(lowerBound).isSubtypeOf(upperBound))
-                && TypeToken.of(lowerBound).isSupertypeOf(upperBound),
-            "No type can satisfy the constraints of %s, "
-                + "which must be a subtype of %s and a supertype of %s",
-            key,
-            lowerBound.getTypeName(),
-            upperBound.getTypeName());
-        return upperBound; // TODO: is this right?
-      }
-      checkArgument(
-          (TypeToken.of(relatedType).isSubtypeOf(exactType) || TypeToken.of(exactType).isSubtypeOf(relatedType))
-              && (TypeToken.of(relatedType).isSubtypeOf(lowerBound) || TypeToken.of(lowerBound).isSubtypeOf(relatedType))
-              && (TypeToken.of(relatedType).isSubtypeOf(upperBound) || TypeToken.of(upperBound).isSubtypeOf(relatedType))
-              && TypeToken.of(exactType).isSubtypeOf(lowerBound)
-              && TypeToken.of(exactType).isSupertypeOf(upperBound)
-              && TypeToken.of(lowerBound).isSupertypeOf(upperBound),
-          "No type can satisfy the constraints of %s, "
-              + "which must be %s, related to %s, a subtype of %s, and a supertype of %s",
-          key,
-          exactType.getTypeName(),
-          relatedType.getTypeName(),
-          lowerBound.getTypeName(),
-          upperBound.getTypeName());
-      return exactType;
     }
 
-    private @Nullable Type getUpperBound() {
-      if (upperBounds == null) {
-        return null;
-      }
+    private static Type mergeUpperBounds(Set<Type> upperBounds) {
+      checkNotNull(upperBounds);
       if (upperBounds.size() == 1) {
         return upperBounds.iterator().next();
       }
@@ -919,7 +984,7 @@ public final class TypeResolver {
       }
       if (supertypes.isEmpty()) {
         // Shouldn't they all share Object at least?
-        throw new IllegalArgumentException("No common supertype for " + key);
+        throw new IllegalArgumentException("No common supertype in bounds " + upperBounds);
       }
       // Remove redundant supertypes.
       for (Type a : new LinkedHashSet<>(supertypes)) {
@@ -935,107 +1000,6 @@ public final class TypeResolver {
       return new Types.WildcardTypeImpl(
           new Type[0],
           supertypes.toArray(new Type[0]));
-    }
-
-    void add(Constraint other) {
-      checkNotNull(other);
-      if (other.exactType != null) {
-        addExactType(other.exactType);
-      }
-      if (other.relatedType != null) {
-        addRelatedType(other.relatedType);
-      }
-      if (other.upperBounds != null) {
-        other.upperBounds.forEach(this::addUpperBound);
-      }
-      if (other.lowerBound != null) {
-        addLowerBound(other.lowerBound);
-      }
-    }
-
-    private boolean addExactType(Type type) {
-      checkNotNull(type);
-      checkNotMappedToSelf(type);
-      if (type.equals(exactType)) {
-        return false;
-      }
-      checkArgument(
-          (exactType == null) || exactType.equals(type),
-          "Type %s must be exactly %s, so it cannot be %s",
-          key,
-          (exactType == null) ? "null" : exactType.getTypeName(),
-          type.getTypeName());
-      exactType = type;
-      return true;
-    }
-
-    private boolean addRelatedType(Type type) {
-      checkNotNull(type);
-      checkNotMappedToSelf(type);
-      if (type.equals(relatedType)) {
-        return false;
-      }
-      if (relatedType == null) {
-        relatedType = type;
-        return true;
-      }
-      if (TypeToken.of(type).isSubtypeOf(relatedType)) {
-        relatedType = type;
-        return true;
-      }
-      if (TypeToken.of(relatedType).isSubtypeOf(type)) {
-        return true;
-      }
-      throw new IllegalArgumentException(
-          "Type "
-              + key
-              + " must be related to "
-              + relatedType.getTypeName()
-              + ", so it cannot also be related to "
-              + type.getTypeName());
-    }
-
-    private boolean addUpperBound(Type type) {
-      checkNotNull(type);
-      checkNotMappedToSelf(type);
-      if (upperBounds == null) {
-        upperBounds = new LinkedHashSet<>();
-      }
-      return upperBounds.add(type);
-      // TODO: Converge the upper bounds right away?
-    }
-
-    private boolean addLowerBound(Type type) {
-      checkNotNull(type);
-      checkNotMappedToSelf(type);
-      if (type.equals(lowerBound)) {
-        return false;
-      }
-      if (lowerBound == null) {
-        lowerBound = type;
-        return true;
-      }
-      if (TypeToken.of(type).isSubtypeOf(lowerBound)) {
-        lowerBound = type;
-        return true;
-      }
-      if (TypeToken.of(lowerBound).isSubtypeOf(type)) {
-        return true;
-      }
-      throw new IllegalArgumentException(
-          "Type "
-              + key
-              + " must be a subtype of "
-              + lowerBound.getTypeName()
-              + ", so it cannot also be a subtype of "
-              + type.getTypeName());
-    }
-
-    private void checkNotMappedToSelf(Type type) {
-      checkArgument(
-          !key.equalsType(type),
-          "Type variable %s bound to itself",
-          key);
     }
 
     private static Set<Type> supertypesOf(Type type) {
@@ -1070,72 +1034,73 @@ public final class TypeResolver {
   }
 
   private static final class Constraints {
-    public static Constraints combine(Constraints a, Constraints b) {
-      checkNotNull(a);
-      checkNotNull(b);
-      Constraints sum = new Constraints();
-      sum.internalAddAll(a);
-      sum.internalAddAll(b);
-      sum.checkKeys();
-      return sum;
-    }
-
+    private final Set<Seen> seen = new LinkedHashSet<>();
     private final Map<TypeVariableKey, Constraint> constraints = new LinkedHashMap<>();
 
-    public @Nullable Type get(TypeVariableKey key) {
+    @Nullable Type get(TypeVariableKey key) {
       checkNotNull(key);
       Constraint constraint = constraints.get(key);
       return (constraint == null) ? null : constraint.get();
     }
 
-    public boolean add(TypeVariableKey key, Type type, ConstraintType constraintType) {
+    boolean add(TypeVariableKey key, Type type, ConstraintType constraintType) {
       checkNotNull(key);
       checkNotNull(type);
       checkNotNull(constraintType);
-      boolean result = internalAdd(key, type, constraintType);
-      checkKeys();
-      return result;
-    }
-
-    private void checkKeys() {
-      constraints.values().forEach(Constraint::get);
-    }
-
-    private boolean internalAdd(TypeVariableKey key,
-                                Type type,
-                                ConstraintType constraintType) {
-      checkNotNull(key);
-      checkNotNull(type);
-      checkNotNull(constraintType);
-      Constraint constraint = constraints.computeIfAbsent(key, k -> new Constraint(key));
-      switch (constraintType) {
-        case EXACT_TYPE:
-          return constraint.addExactType(type);
-        case RELATED_TYPE:
-          return constraint.addRelatedType(type);
-        case UPPER_BOUND:
-          return constraint.addUpperBound(type);
-        case LOWER_BOUND:
-          return constraint.addLowerBound(type);
+      if (!seen.add(new Seen(key, type, constraintType))) {
+        return false;
       }
-      throw new AssertionError("Unknown constraint type " + constraintType);
+      constraints.computeIfAbsent(key, Constraint::new).add(type, constraintType);
+      return true;
     }
 
-    private void internalAddAll(Constraints other) {
+    private void addAll(Constraints other) {
       checkNotNull(other);
+      seen.addAll(other.seen);
       other.constraints.forEach(
-          (key, constraint) -> {
-            constraints.compute(
-                key,
-                (k, previousConstraint) -> {
-                  if (previousConstraint == null) {
-                    return constraint;
-                  } else {
-                    previousConstraint.add(constraint);
-                    return previousConstraint;
-                  }
-                });
-          });
+          (key, constraint) ->
+              constraints.merge(
+                  key,
+                  constraint,
+                  (c1, c2) -> { c1.add(c2); return c1; }));
+    }
+
+    static Constraints combine(Constraints a, Constraints b) {
+      checkNotNull(a);
+      checkNotNull(b);
+      Constraints sum = new Constraints();
+      sum.addAll(a);
+      sum.addAll(b);
+      return sum;
+    }
+
+    private static final class Seen {
+      private final TypeVariableKey key;
+      private final Type type;
+      private final ConstraintType constraintType;
+
+      Seen(TypeVariableKey key, Type type, ConstraintType constraintType) {
+        this.key = checkNotNull(key);
+        this.type = checkNotNull(type);
+        this.constraintType = checkNotNull(constraintType);
+      }
+
+      @Override
+      public boolean equals(@Nullable Object object) {
+        if (object instanceof Seen) {
+          Seen that = (Seen) object;
+          return this.key.equals(that.key)
+              && this.type.equals(that.type)
+              && this.constraintType.equals(that.constraintType);
+        } else {
+          return false;
+        }
+      }
+
+      @Override
+      public int hashCode() {
+        return Objects.hashCode(key, type, constraintType);
+      }
     }
   }
 
