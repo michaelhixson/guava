@@ -382,12 +382,9 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
-    // TODO: This test is too brittle.  Refactor it.
-    // We shouldn't depend on the ordering of the type arguments.  Also, in
-    // later versions of Java, String and Integer share more supertypes:
-    // Constable and ConstantDesc.
-
-    assertEquals(
+    // In later versions of Java, String and Integer share more interfaces than
+    // Serializable and Comparable.
+    Type expectedParameterType =
         Types.newParameterizedType(
             List.class,
             new Types.WildcardTypeImpl(
@@ -397,21 +394,10 @@ public final class StrictTypeResolverTest {
                     Types.newParameterizedType(
                         Comparable.class,
                         Types.subtypeOf(Object.class))
-                })),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+                }));
 
-    assertEquals(
-        Types.newParameterizedType(
-            List.class,
-            new Types.WildcardTypeImpl(
-                new Type[0],
-                new Type[] {
-                    Serializable.class,
-                    Types.newParameterizedType(
-                        Comparable.class,
-                        Types.subtypeOf(Object.class))
-                })),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[0])).isSubtypeOf(expectedParameterType));
+    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[1])).isSubtypeOf(expectedParameterType));
 
     Type returnType = resolver.resolveType(method.getGenericReturnType());
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Serializable.class));
@@ -891,8 +877,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<? extends Integer>>() {}.capture(),
         resolver.resolveType(method.getGenericParameterTypes()[0]));
 
-    // TODO: Refactor this.
-    assertEquals(
+    Type expectedParameterType =
         Types.newParameterizedType(
             List.class,
             new Types.WildcardTypeImpl(
@@ -902,8 +887,9 @@ public final class StrictTypeResolverTest {
                     Types.newParameterizedType(
                         Comparable.class,
                         Types.subtypeOf(Object.class))
-                })),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+                }));
+
+    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[1])).isSubtypeOf(expectedParameterType));
 
     Type returnType = resolver.resolveType(method.getGenericReturnType());
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Number.class));
