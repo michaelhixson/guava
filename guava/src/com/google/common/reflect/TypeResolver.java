@@ -214,8 +214,6 @@ public final class TypeResolver {
         }
         ParameterizedType toParameterizedType;
         if (to instanceof Class) {
-          // TODO: A test is asserting that this exception is thrown, but it's not clear why.
-          checkArgument(((Class<?>) to).getTypeParameters().length  == 0);
           toParameterizedType =
               expectArgument(
                   ParameterizedType.class,

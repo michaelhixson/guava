@@ -162,7 +162,7 @@ public class TypeResolverTest extends TestCase {
 
   public <T> void testWhere_incompatibleParameterizedTypeMapping() {
     try {
-      new TypeResolver().where(new TypeCapture<Iterable<T>>() {}.capture(), List.class);
+      new TypeResolver().where(new TypeCapture<Iterable<T>>() {}.capture(), String.class);
       fail();
     } catch (IllegalArgumentException expected) {
     }
