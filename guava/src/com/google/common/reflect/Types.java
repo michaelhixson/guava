@@ -67,15 +67,35 @@ final class Types {
   /** Returns the array type of {@code componentType}. */
   static Type newArrayType(Type componentType) {
     if (componentType instanceof WildcardType) {
+      //
+      // According to the documentation of GenericArrayType,
+      //
+      //   "GenericArrayType represents an array type whose component type is
+      //    either a parameterized type or a type variable."
+      //
+      // Therefore, the component type cannot be a wildcard type.
+      //
+      // Therefore, perform the following transformations:
+      //   (? super A)[]       ---> ? super (A[])
+      //   (? extends A)[]     ---> ? extends (A[])
+      //   (? super A & B)[]   ---> ? super (A[] & B[])
+      //   (? extends A & B)[] ---> ? extends (A[] & B[])
+      //
       WildcardType wildcard = (WildcardType) componentType;
       Type[] lowerBounds = wildcard.getLowerBounds();
-      checkArgument(lowerBounds.length <= 1, "Wildcard cannot have more than one lower bounds.");
-      if (lowerBounds.length == 1) {
-        return supertypeOf(newArrayType(lowerBounds[0]));
+      if (lowerBounds.length > 0) {
+        Type[] arrayTypes = new Type[lowerBounds.length];
+        for (int i = 0; i < lowerBounds.length; i++) {
+          arrayTypes[i] = newArrayType(lowerBounds[i]);
+        }
+        return new WildcardTypeImpl(arrayTypes, new Type[] { Object.class });
       } else {
         Type[] upperBounds = wildcard.getUpperBounds();
-        checkArgument(upperBounds.length == 1, "Wildcard should have only one upper bound.");
-        return subtypeOf(newArrayType(upperBounds[0]));
+        Type[] arrayTypes = new Type[upperBounds.length];
+        for (int i = 0; i < upperBounds.length; i++) {
+          arrayTypes[i] = newArrayType(upperBounds[i]);
+        }
+        return new WildcardTypeImpl(new Type[0], arrayTypes);
       }
     }
     return JavaVersion.CURRENT.newArrayType(componentType);
