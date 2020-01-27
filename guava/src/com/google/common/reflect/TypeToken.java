@@ -1267,7 +1267,7 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
     Type supertypeWithArgsFromSubtype =
         genericSubtype.getSupertype((Class) getRawType()).runtimeType;
     return new TypeResolver()
-        .where(supertypeWithArgsFromSubtype, runtimeType)
+        .whereTypeVariablesMayBeWildcards(supertypeWithArgsFromSubtype, runtimeType)
         .resolveType(genericSubtype.runtimeType);
   }
 

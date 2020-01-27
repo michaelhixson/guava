@@ -12,6 +12,7 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,13 +44,18 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<ArrayList<String>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<String>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<String>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        param1Type);
+
+    assertEquals(
+        new TypeCapture<List<String>>() {}.capture(),
+        returnType);
+
+    Lists.reverse(new ArrayList<String>());
   }
 
   @Test
@@ -62,13 +68,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Collection<String>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Collection<? extends String>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<String>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   @Test
@@ -94,16 +103,19 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 TimeUnit.class);
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         Types.newParameterizedType(Class.class, TimeUnit.class),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         Types.newParameterizedType(
             EnumMap.class,
             TimeUnit.class,
             method.getTypeParameters()[1]),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   @Test
@@ -116,13 +128,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Map<String, Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Map<? extends String, ? extends Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<LinkedHashMap<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     Maps.newLinkedHashMap(new HashMap<String, Integer>());
   }
@@ -140,17 +155,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 Integer.class);
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         String.class,
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         new TypeCapture<Map.Entry<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   @Test
@@ -166,17 +185,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<com.google.common.base.Function<Integer, Long>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Map<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<com.google.common.base.Function<? super Integer, Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         new TypeCapture<Map<String, Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   @Test
@@ -192,17 +215,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Function<String, Long>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Function<? super String, ? extends Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<Function<? super String, ? extends Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         new TypeCapture<Collector<String, ?, Map<Integer, Long>>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     Collectors.toMap(
         (Function<String, Integer>) Integer::parseInt,
@@ -219,13 +246,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<Stream<String>[]>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Stream<? extends String>[]>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<Stream<String>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   @Test
@@ -241,17 +271,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Map.Entry<String, Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<Map.Entry<Integer, String>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<Map.Entry<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Void.TYPE,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
   }
 
   public static <T, U> void reuseTypeParams(Map.Entry<T, U> a, Map.Entry<U, T> b) {}
@@ -269,17 +303,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<? extends Optional<? extends Integer>>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? extends Optional<? super Integer>>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     nonObjectUpperBound(
         new ArrayList<Optional<Integer>>(),
@@ -290,31 +328,237 @@ public final class StrictTypeResolverTest {
                                                          List<? extends Optional<? super T>> b) { return null; }
 
   @Test
-  public void variance() throws Exception {
-    Method method = StrictTypeResolverTest.class.getMethod("variance", List.class);
+  public void badVariance() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance", List.class);
 
-    // FIXME: This should be rejected, but it isn't.
-    if (false) {
-      try {
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<ArrayList<List<String>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    List<?> a = null;
+    List<String> b = null;
+    a = b;
+
+    List<List<?>> c = null;
+    List<List<String>> d = null;
+    //c = d;
+    //badVariance((List<List<String>>) null);
+  }
+
+  public static Object badVariance(List<List<?>> b) { return null; }
+
+  @Test
+  public void badVariance2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance2", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<ArrayList<List<String>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance2((List<List<Integer>>) null);
+  }
+
+  public static Object badVariance2(List<List<Integer>> b) { return null; }
+
+  @Test
+  public void badVariance3() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance3", Map.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<Map<String, List<Integer>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance3((Map<String, List<Integer>>) null);
+  }
+
+  public static <K> void badVariance3(Map<K, List<?>> a) {}
+
+
+  @Test
+  public void badVariance4() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance4", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<List<String>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance4((List<List<String>>) null);
+  }
+
+  public static <T> void badVariance4(List<List<? extends T>> b) {}
+
+  @Test
+  public void badVariance5() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance5", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<List<? extends String[]>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance5((List<List<? extends String[]>>) null);
+  }
+
+  public static <T> void badVariance5(List<List<T[]>> b) {}
+
+  @Test
+  public void badVariance6() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance6", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<ArrayList<String>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance6((List<ArrayList<String>>) null);
+  }
+
+  public static <T> void badVariance6(List<List<T>> b) {}
+
+  @Test
+  public void badVariance7() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance7", List.class);
+
+    // TODO: Look more closely into why this should fail.
+    // Currently, we're enforcing this through a check that type variables can't
+    // be set to wildcards, with a very ugly exception (not the thrown kind)
+    // for TypeToken.resolveTypeArgsForSubclass().
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<List<?>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance7((List<List<?>>) null);
+  }
+
+  public static <T> void badVariance7(List<List<T>> b) {}
+
+  @Test
+  public void badVariance8() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("badVariance8", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<List<?>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //badVariance8((List<List<?>>) null);
+  }
+
+  public static <T> void badVariance8(List<List<List<T>>> b) {}
+
+  @Test
+  public void okVariance() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("okVariance", List.class);
+
+    TypeResolver resolver =
         new TypeResolver()
             .where(
                 method.getGenericParameterTypes()[0],
-                new TypeCapture<ArrayList<Optional<String>>>() {}.capture());
-        fail();
-      } catch (IllegalArgumentException expected) {}
-    }
+                new TypeCapture<List<String>>() {}.capture());
 
-    Optional<?> a = null;
-    Optional<String> b = null;
-    a = b;
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
 
-    List<Optional<?>> c = null;
-    List<Optional<String>> d = null;
-    //c = d;
-    //variance(new ArrayList<Optional<String>>());
+    assertEquals(
+        new TypeCapture<List<?>>() {}.capture(),
+        param0Type);
+
+    okVariance((List<String>) null);
   }
 
-  public static Object variance(List<Optional<?>> b) { return null; }
+  public static Object okVariance(List<?> b) { return null; }
+
+  @Test
+  public void okVariance2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("okVariance2", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<List<? extends String>>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+
+    assertEquals(
+        new TypeCapture<List<List<? extends String>>>() {}.capture(),
+        param0Type);
+
+    okVariance2((List<List<? extends String>>) null);
+  }
+
+  public static <T> void okVariance2(List<List<? extends T>> b) {}
+
+  @Test
+  public void okVariance3() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("okVariance3", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<List<String>>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+
+    assertEquals(
+        new TypeCapture<List<? extends List<String>>>() {}.capture(),
+        param0Type);
+
+    okVariance3((List<List<String>>) null);
+  }
+
+  public static <T> void okVariance3(List<? extends List<T>> b) {}
+
+  @Test
+  public void okVariance4() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("okVariance4", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<List<String[]>>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+
+    assertEquals(
+        new TypeCapture<List<List<String[]>>>() {}.capture(),
+        param0Type);
+
+    okVariance4((List<List<String[]>>) null);
+  }
+
+  public static <T> void okVariance4(List<List<T[]>> b) {}
 
   @Test
   public void foo() throws Exception {
@@ -326,13 +570,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Integer>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<List<Integer>>() {}.capture(),
+        returnType);
 
     foo(new ArrayList<Integer>());
   }
@@ -352,17 +599,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<List<Integer>>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<List<Integer>>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     bar(new ArrayList<Integer>(), new ArrayList<List<Integer>>());
   }
@@ -384,7 +635,7 @@ public final class StrictTypeResolverTest {
 
     // In later versions of Java, String and Integer share more interfaces than
     // Serializable and Comparable.
-    Type expectedParameterType =
+    Type expectedParamType =
         Types.newParameterizedType(
             List.class,
             new Types.WildcardTypeImpl(
@@ -396,10 +647,12 @@ public final class StrictTypeResolverTest {
                         Types.subtypeOf(Object.class))
                 }));
 
-    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[0])).isSubtypeOf(expectedParameterType));
-    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[1])).isSubtypeOf(expectedParameterType));
-
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(expectedParamType));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(expectedParamType));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Serializable.class));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
 
@@ -419,17 +672,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Void>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<?>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<?>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<List<?>>() {}.capture(),
+        param1Type);
 
     assertEquals(
         Object.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     convergeUpperBounds(new ArrayList<String>(), new ArrayList<Void>());
   }
@@ -449,19 +706,25 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Consumer<String>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<Consumer<? super String>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<Consumer<? super String>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Consumer<? super String>>() {}.capture(),
+        param1Type);
 
     assertEquals(
         String.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
-    convergeLowerBounds((Consumer<CharSequence>) any -> {}, (Consumer<String>) any -> {});
+    convergeLowerBounds(
+        (Consumer<CharSequence>) any -> {},
+        (Consumer<String>) any -> {});
   }
 
   public static <T> T convergeLowerBounds(Consumer<? super T> a, Consumer<? super T> b) { return null; }
@@ -503,6 +766,49 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
+    //convergeLowerBounds((Consumer<String>) any -> {}, (Consumer<Integer>) any -> {});
+  }
+
+  @Test
+  public void convergeLowerBoundsFoo1() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("convergeLowerBounds", Consumer.class, Consumer.class);
+
+    class Foo {}
+    class SubFoo extends Foo {}
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Consumer<Foo>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Consumer<? super SubFoo>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<Consumer<? super SubFoo>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Consumer<? super SubFoo>>() {}.capture(),
+        param1Type);
+
+    assertEquals(
+        SubFoo.class,
+        returnType);
+
+    // This does compile, but IntelliJ says it does not compile.
+    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? super SubFoo>) any -> {});
+  }
+
+  @Test
+  public void convergeLowerBoundsFoo2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("convergeLowerBounds", Consumer.class, Consumer.class);
+
     class Foo {}
     class SubFoo extends Foo {}
 
@@ -517,24 +823,8 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    // FIXME: This is failing.  Something to do with wildcard capture?
-    if (false) {
-      try {
-        new TypeResolver()
-            .where(
-                method.getGenericParameterTypes()[0],
-                new TypeCapture<Consumer<Foo>>() {}.capture())
-            .where(
-                method.getGenericParameterTypes()[1],
-                new TypeCapture<Consumer<? super SubFoo>>() {}.capture());
-        fail();
-      } catch (IllegalArgumentException expected) {}
-    }
-
-    //convergeLowerBounds((Consumer<String>) any -> {}, (Consumer<Integer>) any -> {});
-    //convergeLowerBounds((Consumer<List<Foo>>) any -> {}, (Consumer<List<Bar>>) any -> {});
+    // This does not compile, but IntelliJ says it does compile.
     //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? extends SubFoo>) any -> {});
-    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? super SubFoo>) any -> {});
   }
 
   @Test
@@ -553,26 +843,36 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[2],
                 new TypeCapture<List<Integer>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<Consumer<? super Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<Consumer<? super Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Consumer<? super Integer>>() {}.capture(),
+        param1Type);
 
     assertEquals(
         new TypeCapture<List<? extends Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[2]));
+        param2Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
-    convergeAllBounds((Consumer<Serializable>) any -> {}, (Consumer<Number>) any -> {}, new ArrayList<Integer>());
+    convergeAllBounds(
+        (Consumer<Serializable>) any -> {},
+        (Consumer<Number>) any -> {}, new ArrayList<Integer>());
   }
 
-  public static <T> T convergeAllBounds(Consumer<? super T> a, Consumer<? super T> b, List<? extends T> c) { return null; }
+  public static <T> T convergeAllBounds(
+      Consumer<? super T> a,
+      Consumer<? super T> b,
+      List<? extends T> c) { return null; }
 
   @Test
   public void convergeAllBoundsBad() throws Exception {
@@ -606,17 +906,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? extends Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     exactPlusExact(new ArrayList<Integer>(), new ArrayList<Integer>());
   }
@@ -634,17 +938,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? extends Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Number.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     exactPlusExact(new ArrayList<Number>(), new ArrayList<Integer>());
   }
@@ -663,17 +971,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<Map<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<Map<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Map<String, Integer>>() {}.capture(),
+        param1Type);
 
     assertEquals(
         new TypeCapture<LinkedHashMap<String, Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     exactPlusLower(new ArrayList<Number>(), new ArrayList<Integer>());
   }
@@ -711,17 +1023,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? extends Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Number.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     exactPlusUpper(new ArrayList<Number>(), new ArrayList<Integer>());
   }
@@ -762,23 +1078,31 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[2],
                 new TypeCapture<List<Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        new TypeCapture<List<? extends Number>>() {}.capture(),
+        param2Type);
 
     assertEquals(
         Number.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
-    exactLowerUpper(new ArrayList<Number>(), new ArrayList<Serializable>(), new ArrayList<Integer>());
+    exactLowerUpper(
+        new ArrayList<Number>(),
+        new ArrayList<Serializable>(),
+        new ArrayList<Integer>());
   }
 
   @Test
@@ -815,17 +1139,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Serializable>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<List<? super Number>>() {}.capture(),
+        param1Type);
 
     assertEquals(
         Number.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     variableInBounds(new ArrayList<Number>(), new ArrayList<Serializable>());
   }
@@ -845,17 +1173,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? super Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         Integer.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     variableInBounds(new ArrayList<Number>(), new ArrayList<Integer>());
   }
@@ -873,11 +1205,11 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Double>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? extends Integer>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    Type expectedParameterType =
+    Type expectedParam1Type =
         Types.newParameterizedType(
             List.class,
             new Types.WildcardTypeImpl(
@@ -889,9 +1221,11 @@ public final class StrictTypeResolverTest {
                         Types.subtypeOf(Object.class))
                 }));
 
-    assertTrue(TypeToken.of(resolver.resolveType(method.getGenericParameterTypes()[1])).isSubtypeOf(expectedParameterType));
+    assertEquals(
+        new TypeCapture<List<? extends Integer>>() {}.capture(),
+        param0Type);
 
-    Type returnType = resolver.resolveType(method.getGenericReturnType());
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(expectedParam1Type));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Number.class));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
 
@@ -941,30 +1275,34 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Supplier<Long>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+    Type keyFieldType = resolver.resolveType(keyField.getGenericType());
+    Type valueFieldType = resolver.resolveType(valueField.getGenericType());
+
     assertEquals(
         new TypeCapture<Function<? super String, ? extends Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<Supplier<? extends Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param1Type);
 
     assertEquals(
         new TypeCapture<Map.Entry<List<String>, Long>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     assertEquals(
         new TypeCapture<List<String>>() {}.capture(),
-        resolver.resolveType(keyField.getGenericType()));
+        keyFieldType);
 
     assertEquals(
         String.class,
-        resolver.resolveType(valueField.getGenericType()));
-
-    Box<String, List<String>> box = new Box<String, List<String>>();
+        valueFieldType);
 
     Map.Entry<List<String>, Long> entry =
-        box.transformValue(
+        new Box<String, List<String>>().transformValue(
             (Function<String, Long>) Long::parseLong,
             (Supplier<Long>) () -> Long.MAX_VALUE);
   }
@@ -1008,49 +1346,29 @@ public final class StrictTypeResolverTest {
 
   @Test
   public void typeChain() throws Exception {
-    // TODO: Understand why this works, and then implement it in TypeResolver.
-    List<String> a = typeChain(new ArrayList<Number>());
-    TimeUnit b = typeChain(new ArrayList<Optional<Integer>>());
-
     Method method = StrictTypeResolverTest.class.getMethod("typeChain", List.class);
 
-    if (false) {
-      TypeResolver resolver =
-          new TypeResolver()
-              .where(
-                  method.getGenericParameterTypes()[0],
-                  new TypeCapture<ArrayList<Number>>() {}.capture())
-              .where(
-                  method.getGenericReturnType(),
-                  new TypeCapture<List<String>>() {}.capture());
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<ArrayList<Number>>() {}.capture())
+            .where(
+                method.getGenericReturnType(),
+                new TypeCapture<List<String>>() {}.capture());
 
-      assertEquals(
-          new TypeCapture<ArrayList<Number>>() {}.capture(),
-          resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-      assertEquals(
-          new TypeCapture<List<String>>() {}.capture(),
-          resolver.resolveType(method.getGenericReturnType()));
-    }
+    assertEquals(
+        new TypeCapture<ArrayList<Number>>() {}.capture(),
+        param0Type);
 
-    if (false) {
-      TypeResolver resolver =
-          new TypeResolver()
-              .where(
-                  method.getGenericParameterTypes()[0],
-                  new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture())
-              .where(
-                  method.getGenericReturnType(),
-                  TimeUnit.class);
+    assertEquals(
+        new TypeCapture<List<String>>() {}.capture(),
+        returnType);
 
-      assertEquals(
-          new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture(),
-          resolver.resolveType(method.getGenericParameterTypes()[0]));
-
-      assertEquals(
-          TimeUnit.class,
-          resolver.resolveType(method.getGenericReturnType()));
-    }
+    List<String> a = typeChain(new ArrayList<Number>());
   }
 
   public static <
@@ -1058,6 +1376,33 @@ public final class StrictTypeResolverTest {
       B extends List<A>,
       C extends List<? super B>>
   A typeChain(C c) { return null; }
+
+  @Test
+  public void typeChain2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("typeChain", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture())
+            .where(
+                method.getGenericReturnType(),
+                TimeUnit.class);
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<ArrayList<Optional<Integer>>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        TimeUnit.class,
+        returnType);
+
+    TimeUnit b = typeChain(new ArrayList<Optional<Integer>>());
+  }
 
   @Test
   public void nestedWildcardUpperBounds() throws Exception {
@@ -1069,13 +1414,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? extends Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<? extends Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<List<? extends Number>>() {}.capture(),
+        returnType);
 
     nestedWildcardUpperBounds(new ArrayList<Number>());
   }
@@ -1092,13 +1440,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Number>>() {}.capture());
 
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? super Object>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
     assertEquals(
         new TypeCapture<List<? super Object>>() {}.capture(),
@@ -1155,17 +1506,21 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Number>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+        param0Type);
 
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        param1Type);
+
+    assertEquals(
+        new TypeCapture<List<? super Number>>() {}.capture(),
+        returnType);
 
     nestedWildcardLowerBounds2(new ArrayList<Number>(), new ArrayList<Number>());
   }
@@ -1182,39 +1537,83 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<? super Number>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericReturnType()));
+        param0Type);
+
+    // List<? super ? super Number>
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<List<? super Number>>() {}.capture()));
+
+    superOfWildcard((List<? super Number>) null);
   }
 
   public static <T> List<? super T> superOfWildcard(List<T> a) { return null; }
 
   @Test
-  public void typeChain2() throws Exception {
-    Method method = StrictTypeResolverTest.class.getMethod("typeChain2", List.class);
+  public void otherTypeChain() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("otherTypeChain", List.class, List.class);
 
     TypeResolver resolver =
         new TypeResolver()
             .where(
                 method.getGenericParameterTypes()[0],
-                new TypeCapture<List<Number>>() {}.capture());
+                new TypeCapture<List<AccessibleObject>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Member>>() {}.capture());
 
-    assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? super AccessibleObject & Member>
+    assertTrue(param0Type instanceof ParameterizedType);
+    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
+    assertEquals(List.class, param0ParameterizedType.getRawType());
+    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
+    assertEquals(1, param0TypeArgs.length);
+    Type param0TypeArg = param0TypeArgs[0];
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(AccessibleObject.class));
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(Member.class));
+
+    // List<? super AccessibleObject & Member>
+    assertTrue(param1Type instanceof ParameterizedType);
+    ParameterizedType param1ParameterizedType = (ParameterizedType) param1Type;
+    assertEquals(List.class, param1ParameterizedType.getRawType());
+    Type[] param1TypeArgs = param1ParameterizedType.getActualTypeArguments();
+    assertEquals(1, param1TypeArgs.length);
+    Type param1TypeArg = param1TypeArgs[0];
+    assertTrue(param1TypeArg.getTypeName(), TypeToken.of(param1TypeArg).isSupertypeOf(AccessibleObject.class));
+    assertTrue(param1TypeArg.getTypeName(), TypeToken.of(param1TypeArg).isSupertypeOf(Member.class));
 
     assertEquals(
         Object.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        returnType);
 
-    typeChain2(new ArrayList<Number>());
+    otherTypeChain(new ArrayList<AccessibleObject>(), new ArrayList<Member>());
   }
 
-  public static <A, B extends A, C extends B> A typeChain2(List<? super C> a) { return null; }
+  public static <A, B extends A, C extends B> A otherTypeChain(List<? super C> a, List<? super C> b) { return null; }
+
+
+  @Test
+  public void badOtherTypeChain() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("otherTypeChain", List.class, List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<AccessibleObject>>() {}.capture())
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<Number>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+  }
 
   @Test
   public void canAccess() throws Exception {
@@ -1226,13 +1625,16 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 Method.class);
 
-    assertEquals(
-        Method.class,
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
         Method.class,
-        resolver.resolveType(method.getGenericReturnType()));
+        param0Type);
+
+    assertEquals(
+        Method.class,
+        returnType);
 
     canAccess(method);
   }
@@ -1252,38 +1654,47 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<Consumer<Member>>() {}.capture());
 
-    assertEquals(
-        Types.newParameterizedType(
-            Consumer.class,
-            new Types.WildcardTypeImpl(
-                new Type[] {
-                    AccessibleObject.class,
-                    Member.class
-                },
-                new Type[] { Object.class })),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    assertEquals(
-        Types.newParameterizedType(
-            Consumer.class,
-            new Types.WildcardTypeImpl(
-                new Type[] {
-                    AccessibleObject.class,
-                    Member.class
-                },
-                new Type[] { Object.class })),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+    // Consumer<? super AccessibleObject & Member>
+    assertTrue(param0Type instanceof ParameterizedType);
+    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
+    assertEquals(Consumer.class, param0ParameterizedType.getRawType());
+    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
+    assertEquals(1, param0TypeArgs.length);
+    Type param0TypeArg = param0TypeArgs[0];
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(AccessibleObject.class));
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(Member.class));
 
-    assertEquals(
-        new Types.WildcardTypeImpl(
-            new Type[0],
-            new Type[] {
-                AccessibleObject.class,
-                Member.class
-            }),
-        resolver.resolveType(method.getGenericReturnType()));
+    // Consumer<? super AccessibleObject & Member>
+    assertTrue(param1Type instanceof ParameterizedType);
+    ParameterizedType param1ParameterizedType = (ParameterizedType) param1Type;
+    assertEquals(Consumer.class, param0ParameterizedType.getRawType());
+    Type[] param1TypeArgs = param1ParameterizedType.getActualTypeArguments();
+    assertEquals(1, param1TypeArgs.length);
+    Type param1TypeArg = param1TypeArgs[0];
+    assertTrue(TypeToken.of(param1TypeArg).isSupertypeOf(AccessibleObject.class));
+    assertTrue(TypeToken.of(param1TypeArg).isSupertypeOf(Member.class));
 
-    canAccess2((Consumer<AccessibleObject>) any -> {}, (Consumer<Member>) any -> {});
+    // AccessibleObject & Member
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(AccessibleObject.class));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(Member.class));
+
+    canAccess2(
+        (Consumer<AccessibleObject>) any -> {},
+        (Consumer<Member>) any -> {});
+
+    AccessibleObject a =
+        canAccess2(
+            (Consumer<AccessibleObject>) any -> {},
+            (Consumer<Member>) any -> {});
+
+    Member b =
+        canAccess2(
+            (Consumer<AccessibleObject>) any -> {},
+            (Consumer<Member>) any -> {});
   }
 
   public static <T> T canAccess2(Consumer<? super T> a, Consumer<? super T> b) { return null; }
@@ -1301,43 +1712,225 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[0],
                 new TypeCapture<List<Method>>() {}.capture());
 
-    assertEquals(
-        Types.newParameterizedType(
-            List.class,
-            new Types.WildcardTypeImpl(
-                new Type[0],
-                new Type[] {
-                    AccessibleObject.class,
-                    Member.class
-                })),
-        resolver.resolveType(method.getGenericParameterTypes()[0]));
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    assertEquals(
-        Types.newParameterizedType(
-            List.class,
-            new Types.WildcardTypeImpl(
-                new Type[0],
-                new Type[] {
-                    AccessibleObject.class,
-                    Member.class
-                })),
-        resolver.resolveType(method.getGenericParameterTypes()[1]));
+    assertTrue(param0Type instanceof ParameterizedType);
+    assertEquals(List.class, ((ParameterizedType) param0Type).getRawType());
+    assertEquals(1, ((ParameterizedType) param0Type).getActualTypeArguments().length);
+    Type param0TypeArg = ((ParameterizedType) param0Type).getActualTypeArguments()[0];
+    assertTrue(TypeToken.of(param0TypeArg).isSubtypeOf(AccessibleObject.class));
+    assertTrue(TypeToken.of(param0TypeArg).isSubtypeOf(Member.class));
 
-    assertEquals(
-        new Types.WildcardTypeImpl(
-            new Type[0],
-            new Type[] {
-                AccessibleObject.class,
-                Member.class
-            }),
-        resolver.resolveType(method.getGenericReturnType()));
+    assertTrue(param1Type instanceof ParameterizedType);
+    assertEquals(List.class, ((ParameterizedType) param1Type).getRawType());
+    assertEquals(1, ((ParameterizedType) param1Type).getActualTypeArguments().length);
+    Type param1TypeArg = ((ParameterizedType) param1Type).getActualTypeArguments()[0];
+    assertTrue(TypeToken.of(param1TypeArg).isSubtypeOf(AccessibleObject.class));
+    assertTrue(TypeToken.of(param1TypeArg).isSubtypeOf(Member.class));
 
-    Method m = null;
-    Field f = null;
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(AccessibleObject.class));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(Member.class));
+
     canAccess3(
-        (List<Field>) Collections.singletonList(f),
-        (List<Method>) Collections.singletonList(m));
+        (List<Field>) null,
+        (List<Method>) null);
   }
 
   public static <T extends AccessibleObject & Member> T canAccess3(List<? extends T> a, List<? extends T> b) { return null; }
+
+  @Test
+  public void array() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("array", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<Integer[]>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<List<? extends Integer[]>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        Integer.class,
+        returnType);
+  }
+
+  public static <T extends Serializable> T array(List<? extends T[]> a) { return null; }
+
+  @Test
+  public void arrayWrongType() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("array", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<CharSequence[]>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+  }
+
+  @Test
+  public void arrayAndWildcardExtends() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("array", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? extends Number[]>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<List<? extends Number[]>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        Number.class,
+        returnType);
+
+    List<? extends Number[]> list = null;
+    array(list);
+  }
+
+  @Test
+  public void arraySuperAndWildcardExtends() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("arraySuper", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends Number[]>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    List<? extends Number[]> list = null;
+    // IntelliJ doesn't catch this one:
+    //arraySuper(list);
+  }
+
+  @Test
+  public void arrayAndBadWildcardExtends() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("array", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends Comparable<?>[]>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    List<? extends Comparable<?>[]> list = null;
+    //array(list);
+  }
+
+  @Test
+  public void arrayAndWildcardSuper() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("arraySuper", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? super Comparable<?>[]>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? super Serializable & Comparable<?>[]>
+    assertTrue(param0Type instanceof ParameterizedType);
+    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
+    assertEquals(List.class, param0ParameterizedType.getRawType());
+    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
+    assertEquals(1, param0TypeArgs.length);
+    Type param0TypeArg = param0TypeArgs[0];
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Comparable<?>[]>() {}.capture()));
+    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Serializable[]>() {}.capture()));
+
+    // Serializable & Comparable<?>
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(Serializable.class));
+
+    Serializable a = arraySuper((List<? super Comparable<?>[]>) null);
+    Comparable<?> b = arraySuper((List<? super Comparable<?>[]>) null);
+  }
+
+  public static <T extends Serializable> T arraySuper(List<? super T[]> a) { return null; }
+
+  @Test
+  public void parameterizedTypeToWildcardExtends() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("parameterizedTypeToWildcard", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends List<Number>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //parameterizedTypeToWildcard((List<? extends List<Number>>) null);
+  }
+
+  @Test
+  public void parameterizedTypeToWildcardExtends2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("parameterizedTypeToWildcard", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends List<Integer>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    // no instance of T exists such that capture of ? extends List<Integer> conforms to Collection<T>
+    //parameterizedTypeToWildcard((List<? extends List<Integer>>) null);
+  }
+
+  @Test
+  public void parameterizedTypeToWildcardSuper() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("parameterizedTypeToWildcard", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? super List<Number>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //parameterizedTypeToWildcard((List<? super List<Number>>) null);
+  }
+
+  @Test
+  public void parameterizedTypeToWildcardSuper2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("parameterizedTypeToWildcard", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? super List<Integer>>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    // Note: this is an instance of a wildcard capture with lower bounds.
+    // no instance of T exists such that capture of ? super List<Integer> conforms to Collection<T>
+    //parameterizedTypeToWildcard((List<? super List<Integer>>) null);
+    //parameterizedTypeToWildcard((List<?>) null);
+  }
+
+  public static <T extends Comparable<? super T>> T parameterizedTypeToWildcard(List<Collection<T>> a) { return null; }
 }
