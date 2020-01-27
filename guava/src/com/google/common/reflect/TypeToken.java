@@ -852,7 +852,7 @@ public abstract class TypeToken<T> extends TypeCapture<T> implements Serializabl
       @Override
       void visitTypeVariable(TypeVariable<?> type) {
         throw new IllegalArgumentException(
-            runtimeType + "contains a type variable and is not safe for the operation");
+            runtimeType + " contains a type variable and is not safe for the operation");
       }
 
       @Override
