@@ -76,7 +76,9 @@ public final class TypeResolver {
    * {@code <?>}.
    */
   static TypeResolver covariantly(Type contextType) {
-    return new TypeResolver().where(TypeMappingIntrospector.getConstraints(contextType));
+    Constraints constraints = TypeMappingIntrospector.getConstraints(contextType);
+    TypeTable typeTable = new TypeTable(constraints);
+    return new TypeResolver(typeTable);
   }
 
   /**
@@ -92,7 +94,9 @@ public final class TypeResolver {
    */
   static TypeResolver invariantly(Type contextType) {
     Type invariantContext = WildcardCapturer.INSTANCE.capture(contextType);
-    return new TypeResolver().where(TypeMappingIntrospector.getConstraints(invariantContext));
+    Constraints constraints = TypeMappingIntrospector.getConstraints(invariantContext);
+    TypeTable typeTable = new TypeTable(constraints);
+    return new TypeResolver(typeTable);
   }
 
   /**
@@ -117,24 +121,18 @@ public final class TypeResolver {
   public TypeResolver where(Type formal, Type actual) {
     checkNotNull(formal);
     checkNotNull(actual);
-    Constraints constraints = new Constraints();
-    constraints.set(formal, ConstraintKind.SUPERTYPE_OF, actual);
-    return where(constraints);
+    Constraints moreConstraints = Constraints.fromTypeArgument(formal, actual);
+    TypeTable newTypeTable = typeTable.where(moreConstraints);
+    return new TypeResolver(newTypeTable);
   }
 
   // TODO: Figure out if this method is really necessary.
-  // TODO: If this method is necessary, come up with a better name.
-  TypeResolver whereTypeVariablesMayBeWildcards(Type formal, Type actual) {
+  TypeResolver withTypeDeclaration(Type formal, Type actual) {
     checkNotNull(formal);
     checkNotNull(actual);
-    Constraints constraints = new Constraints(true);
-    constraints.set(formal, ConstraintKind.SUPERTYPE_OF, actual);
-    return where(constraints);
-  }
-
-  /** Returns a new {@code TypeResolver} with additional constraints. */
-  private TypeResolver where(Constraints constraints) {
-    return new TypeResolver(typeTable.where(constraints));
+    Constraints moreConstraints = Constraints.fromTypeDeclaration(formal, actual);
+    TypeTable newTypeTable = typeTable.where(moreConstraints);
+    return new TypeResolver(newTypeTable);
   }
 
   /**
@@ -276,13 +274,14 @@ public final class TypeResolver {
       this.constraints = new Constraints();
     }
 
-    private TypeTable(Constraints constraints) {
+    TypeTable(Constraints constraints) {
       this.constraints = constraints;
     }
 
     /** Returns a new {@code TypeTable} with additional constraints. */
     final TypeTable where(Constraints moreConstraints) {
-      return new TypeTable(Constraints.combine(constraints, moreConstraints));
+      Constraints combinedConstraints = Constraints.combine(constraints, moreConstraints);
+      return new TypeTable(combinedConstraints);
     }
 
     final Type resolve(final TypeVariable<?> var) {
@@ -370,7 +369,7 @@ public final class TypeResolver {
       introspector.visit(contextType);
       Constraints constraints = new Constraints();
       for (Map.Entry<TypeVariableKey, Type> entry : introspector.mappings.entrySet()) {
-        constraints.set(entry.getKey(), ConstraintKind.EQUAL_TO, entry.getValue());
+        constraints.put(entry.getKey(), ConstraintKind.EQUAL_TO, entry.getValue());
       }
       return constraints;
     }
@@ -616,138 +615,171 @@ public final class TypeResolver {
   /** Constraints for one {@link TypeVariable}. */
   private static final class Constraint {
     private final TypeVariableKey key;
-    private @Nullable Type equalTo;
-    private @Nullable Set<Type> relatedTo;
-    private @Nullable Set<Type> subtypeOf;
-    private @Nullable Set<Type> supertypeOf;
+    private @Nullable Type equalToType;
+    private @Nullable Set<Type> relatedToTypes;
+    private @Nullable Set<Type> subtypeOfTypes;
+    private @Nullable Set<Type> supertypeOfTypes;
 
     Constraint(TypeVariableKey key) {
       this.key = checkNotNull(key);
     }
 
+    /** Deduces the type of this type variable from its constraints. */
     Type get() {
-      if (equalTo != null) {
-        return equalTo;
+      if (equalToType != null) {
+        return equalToType;
       }
-      if (supertypeOf != null) {
-        return mergeSupertypeOf(supertypeOf);
+      if (supertypeOfTypes != null) {
+        return reduceSupertypeOfTypes(supertypeOfTypes);
       }
-      if (subtypeOf != null) {
-        return mergeSubtypeOf(subtypeOf);
+      if (subtypeOfTypes != null) {
+        return reduceSubtypeOfTypes(subtypeOfTypes);
       }
-      if (relatedTo != null) {
+      if (relatedToTypes != null) {
         return Object.class;
       }
+      // This should never occur because whenever we create an instance, we immediately call one of
+      // its setters, meaning that at least one of these fields will be non-null.
       throw new IllegalStateException();
     }
 
-    void set(Constraint that) {
-      checkNotNull(that);
-      if (that.equalTo != null) {
-        setEqualTo(that.equalTo);
-      }
-      if (that.relatedTo != null) {
-        that.relatedTo.forEach(this::setRelatedTo);
-      }
-      if (that.subtypeOf != null) {
-        that.subtypeOf.forEach(this::setSubtypeOf);
-      }
-      if (that.supertypeOf != null) {
-        that.supertypeOf.forEach(this::setSupertypeOf);
-      }
-    }
-
-    void set(ConstraintKind kind, Type type) {
-      checkNotNull(kind);
-      checkNotNull(type);
-      switch (kind) {
-        case EQUAL_TO:
-          setEqualTo(type);
-          return;
-        case RELATED_TO:
-          setRelatedTo(type);
-          return;
-        case SUBTYPE_OF:
-          setSubtypeOf(type);
-          return;
-        case SUPERTYPE_OF:
-          setSupertypeOf(type);
-          return;
-      }
-      throw new AssertionError("Unknown constraint kind " + kind);
-    }
-
+    /**
+     * Adds the constraint that this type variable is equal to the specified type.
+     *
+     * @throws IllegalArgumentException if this new constraint is incompatible with existing
+     *         constraints
+     */
     void setEqualTo(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
-      checkEqualToAndRelatedTo(type, relatedTo);
-      checkEqualToAndSubtypeOf(type, subtypeOf);
-      checkEqualToAndSupertypeOf(type, supertypeOf);
-      if (equalTo == null) {
-        equalTo = type;
+      checkEqualToAndRelatedTo(type, relatedToTypes);
+      checkEqualToAndSubtypeOf(type, subtypeOfTypes);
+      checkEqualToAndSupertypeOf(type, supertypeOfTypes);
+      if (equalToType == null) {
+        equalToType = type;
         return;
       }
       checkArgument(
-          equalTo.equals(type),
+          equalToType.equals(type),
           "Type %s must be exactly %s, so it cannot be %s",
           key,
-          equalTo.getTypeName(),
+          equalToType.getTypeName(),
           type.getTypeName());
     }
 
+    /**
+     * Adds the constraint that this type variable is related to the specified type.  Two types are
+     * related when it is possible to subtype both types.
+     *
+     * @throws IllegalArgumentException if this new constraint is incompatible with existing
+     *         constraints
+     */
     void setRelatedTo(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       // No need to re-check the other bounds.
       ImmutableSet<Type> newRelatedTo = ImmutableSet.of(type);
-      checkEqualToAndRelatedTo(equalTo, newRelatedTo);
-      checkRelatedToAndSubtypeOf(newRelatedTo, subtypeOf);
-      checkRelatedToAndSupertypeOf(newRelatedTo, supertypeOf);
-      if (relatedTo != null) {
-        for (Type existing : relatedTo) {
+      checkEqualToAndRelatedTo(equalToType, newRelatedTo);
+      checkRelatedToAndSubtypeOf(newRelatedTo, subtypeOfTypes);
+      checkRelatedToAndSupertypeOf(newRelatedTo, supertypeOfTypes);
+      if (relatedToTypes != null) {
+        for (Type existing : relatedToTypes) {
           // TODO: Write a test that throws here.
-          checkPossibleToSubtypeBoth(existing, type);
+          checkArgument(
+              isPossibleToSubtypeBoth(existing, type),
+              "Type %s must be related to %s, so it cannot be related to %s",
+              key,
+              existing.getTypeName(),
+              type.getTypeName());
         }
       }
-      if (relatedTo == null) {
-        relatedTo = new LinkedHashSet<>();
+      if (relatedToTypes == null) {
+        relatedToTypes = new LinkedHashSet<>();
       }
-      relatedTo.add(type);
+      relatedToTypes.add(type);
     }
 
+    /**
+     * Adds the constraint that this type variable is a subtype of the specified type.
+     *
+     * @throws IllegalArgumentException if this new constraint is incompatible with existing
+     *         constraints
+     */
     void setSubtypeOf(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       // No need to re-check the other bounds.
       ImmutableSet<Type> newSubtypeOf = ImmutableSet.of(type);
-      checkEqualToAndSubtypeOf(equalTo, newSubtypeOf);
-      checkRelatedToAndSubtypeOf(relatedTo, newSubtypeOf);
-      checkSubtypeOfAndSupertypeOf(newSubtypeOf, supertypeOf);
-      if (subtypeOf != null) {
-        for (Type existing : subtypeOf) {
-          checkPossibleToSubtypeBoth(existing, type);
+      checkEqualToAndSubtypeOf(equalToType, newSubtypeOf);
+      checkRelatedToAndSubtypeOf(relatedToTypes, newSubtypeOf);
+      checkSubtypeOfAndSupertypeOf(newSubtypeOf, supertypeOfTypes);
+      if (subtypeOfTypes != null) {
+        for (Type existing : subtypeOfTypes) {
+          checkArgument(
+              isPossibleToSubtypeBoth(existing, type),
+              "Type %s must be a subtype of%s, so it cannot be a subtype of %s",
+              key,
+              existing.getTypeName(),
+              type.getTypeName());
         }
       }
-      if (subtypeOf == null) {
-        subtypeOf = new LinkedHashSet<>();
+      if (subtypeOfTypes == null) {
+        subtypeOfTypes = new LinkedHashSet<>();
       }
-      subtypeOf.add(type);
+      subtypeOfTypes.add(type);
     }
 
+    /**
+     * Adds the constraint that this type variable is a supertype of the specified type.
+     *
+     * @throws IllegalArgumentException if this new constraint is incompatible with existing
+     *         constraints
+     */
     void setSupertypeOf(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       // No need to re-check the other bounds.
       ImmutableSet<Type> newSupertypeOf = ImmutableSet.of(type);
-      checkEqualToAndSupertypeOf(equalTo, newSupertypeOf);
-      checkRelatedToAndSupertypeOf(relatedTo, newSupertypeOf);
-      checkSubtypeOfAndSupertypeOf(subtypeOf, newSupertypeOf);
-      if (supertypeOf == null) {
-        supertypeOf = new LinkedHashSet<>();
+      checkEqualToAndSupertypeOf(equalToType, newSupertypeOf);
+      checkRelatedToAndSupertypeOf(relatedToTypes, newSupertypeOf);
+      checkSubtypeOfAndSupertypeOf(subtypeOfTypes, newSupertypeOf);
+      if (supertypeOfTypes == null) {
+        supertypeOfTypes = new LinkedHashSet<>();
       }
-      supertypeOf.add(type);
+      supertypeOfTypes.add(type);
     }
 
+    /**
+     * Adds the specified constraints to this type variable.
+     *
+     * @throws IllegalArgumentException if the new constraints are incompatible with the existing
+     *         constraints
+     */
+    void setAll(Constraint that) {
+      checkNotNull(that);
+      if (that.equalToType != null) {
+        setEqualTo(that.equalToType);
+      }
+      if (that.relatedToTypes != null) {
+        for (Type type : that.relatedToTypes) {
+          setRelatedTo(type);
+        }
+      }
+      if (that.subtypeOfTypes != null) {
+        for (Type type : that.subtypeOfTypes) {
+          setSubtypeOf(type);
+        }
+      }
+      if (that.supertypeOfTypes != null) {
+        for (Type type : that.supertypeOfTypes) {
+          setSupertypeOf(type);
+        }
+      }
+    }
+
+    /**
+     * @throws IllegalArgumentException if the specified type is this type variable
+     */
     private void checkNotMappedToSelf(Type type) {
       checkArgument(
           !key.equalsType(type),
@@ -755,98 +787,129 @@ public final class TypeResolver {
           key);
     }
 
-    private void checkPossibleToSubtypeBoth(Type a, Type b) {
-      checkNotNull(a);
-      checkNotNull(b);
-      checkArgument(
-          isPossibleToSubtypeBoth(a, b),
-          "Type %s must be a subtype of %s, so it cannot also be a subtype of %s",
-          key,
-          a.getTypeName(),
-          b.getTypeName());
-    }
-
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
+     *         {@code equalToType} and related to all of {@code relatedToTypes}
+     */
     private void checkEqualToAndRelatedTo(
-        @Nullable Type equalTo,
-        @Nullable Set<Type> relatedTo) {
-      if (equalTo == null || relatedTo == null) {
+        @Nullable Type equalToType,
+        @Nullable Set<Type> relatedToTypes) {
+      if (equalToType == null || relatedToTypes == null) {
         return;
       }
-      for (Type type : relatedTo) {
-        checkPossibleToSubtypeBoth(type, equalTo);
+      for (Type type : relatedToTypes) {
+        checkArgument(
+            isPossibleToSubtypeBoth(equalToType, type),
+            "No type can satisfy the constraints of %s, "
+                + "which must be equal to %s and related to %s",
+            key,
+            equalToType.getTypeName(),
+            type.getTypeName());
       }
     }
 
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
+     *         {@code equalToType} and a subtype of all of {@code subtypeOfTypes}
+     */
     private void checkEqualToAndSubtypeOf(
-        @Nullable Type equalTo,
-        @Nullable Set<Type> subtypeOf) {
-      if (equalTo == null || subtypeOf == null) {
+        @Nullable Type equalToType,
+        @Nullable Set<Type> subtypeOfTypes) {
+      if (equalToType == null || subtypeOfTypes == null) {
         return;
       }
-      for (Type type : subtypeOf) {
+      for (Type type : subtypeOfTypes) {
         checkArgument(
-            TypeToken.of(equalTo).isSubtypeOf(type),
+            isSubtype(equalToType, type),
             "No type can satisfy the constraints of %s, "
                 + "which must be equal to %s and a subtype of %s",
             key,
-            equalTo.getTypeName(),
+            equalToType.getTypeName(),
             type.getTypeName());
       }
     }
 
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
+     *         {@code equalToType} and a supertype of all of {@code supertypeOfTypes}
+     */
     private void checkEqualToAndSupertypeOf(
-        @Nullable Type equalTo,
-        @Nullable Set<Type> supertypeOf) {
-      if (equalTo == null || supertypeOf == null) {
+        @Nullable Type equalToType,
+        @Nullable Set<Type> supertypeOfTypes) {
+      if (equalToType == null || supertypeOfTypes == null) {
         return;
       }
-      for (Type type : supertypeOf) {
+      for (Type type : supertypeOfTypes) {
         checkArgument(
-            TypeToken.of(equalTo).isSupertypeOf(type),
+            isSubtype(type, equalToType),
             "No type can satisfy the constraints of %s, "
                 + "which must be equal to %s and a supertype of %s",
             key,
-            equalTo.getTypeName(),
+            equalToType.getTypeName(),
             type.getTypeName());
       }
     }
 
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be related to
+     *         all of {@code relatedToType} and a subtype of all of {@code subtypeOfTypes}
+     */
     private void checkRelatedToAndSubtypeOf(
-        @Nullable Set<Type> relatedTo,
-        @Nullable Set<Type> subtypeOf) {
-      if (relatedTo == null || subtypeOf == null) {
+        @Nullable Set<Type> relatedToType,
+        @Nullable Set<Type> subtypeOfTypes) {
+      if (relatedToType == null || subtypeOfTypes == null) {
         return;
       }
-      for (Type a : relatedTo) {
-        for (Type b : subtypeOf) {
-          checkPossibleToSubtypeBoth(a, b);
-        }
-      }
-    }
-
-    private void checkRelatedToAndSupertypeOf(
-        @Nullable Set<Type> relatedTo,
-        @Nullable Set<Type> supertypeOf) {
-      if (relatedTo == null || supertypeOf == null) {
-        return;
-      }
-      for (Type a : relatedTo) {
-        for (Type b : supertypeOf) {
-          checkPossibleToSubtypeBoth(a, b);
-        }
-      }
-    }
-
-    private void checkSubtypeOfAndSupertypeOf(
-        @Nullable Set<Type> subtypeOf,
-        @Nullable Set<Type> supertypeOf) {
-      if (subtypeOf == null || supertypeOf == null) {
-        return;
-      }
-      for (Type a : subtypeOf) {
-        for (Type b : supertypeOf) {
+      for (Type a : relatedToType) {
+        for (Type b : subtypeOfTypes) {
           checkArgument(
-              TypeToken.of(a).isSupertypeOf(b),
+              isPossibleToSubtypeBoth(a, b),
+              "No type can satisfy the constraints of %s, "
+                  + "which must be related to %s and a subtype of %s",
+              key,
+              a.getTypeName(),
+              b.getTypeName());
+        }
+      }
+    }
+
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be related to
+     *         all of {@code relatedToTypes} and a supertype of of all of {@code supertypeOfTypes}
+     */
+    private void checkRelatedToAndSupertypeOf(
+        @Nullable Set<Type> relatedToTypes,
+        @Nullable Set<Type> supertypeOfTypes) {
+      if (relatedToTypes == null || supertypeOfTypes == null) {
+        return;
+      }
+      for (Type a : relatedToTypes) {
+        for (Type b : supertypeOfTypes) {
+          checkArgument(
+              isPossibleToSubtypeBoth(a, b),
+              "No type can satisfy the constraints of %s, "
+                  + "which must be related to %s and a supertype of %s",
+              key,
+              a.getTypeName(),
+              b.getTypeName());
+        }
+      }
+    }
+
+    /**
+     * @throws IllegalArgumentException if it is impossible for any type variable to be a subtype of
+     *         all of {@code subtypeOfTypes} and a supertype of of all of {@code supertypeOfTypes}
+     */
+    private void checkSubtypeOfAndSupertypeOf(
+        @Nullable Set<Type> subtypeOfTypes,
+        @Nullable Set<Type> supertypeOfTypes) {
+      if (subtypeOfTypes == null || supertypeOfTypes == null) {
+        return;
+      }
+      for (Type a : subtypeOfTypes) {
+        for (Type b : supertypeOfTypes) {
+          checkArgument(
+              isSubtype(b, a),
               "No type can satisfy the constraints of %s, "
                   + "which must be a subtype of %s and a supertype of %s",
               key,
@@ -856,7 +919,10 @@ public final class TypeResolver {
       }
     }
 
-    private static Type mergeSubtypeOf(Set<Type> types) {
+    /**
+     * Returns a type that is a subtype of all of the specified types.
+     */
+    private static Type reduceSubtypeOfTypes(Set<Type> types) {
       checkNotNull(types);
       checkArgument(!types.isEmpty());
       if (types.size() == 1) {
@@ -865,12 +931,15 @@ public final class TypeResolver {
       // Remove redundant types.
       Set<Type> canonical = new LinkedHashSet<>(types);
       for (Type a : types) {
-        TypeToken<?> aToken = TypeToken.of(a);
-        canonical.removeIf(b -> !b.equals(a) && aToken.isSubtypeOf(b));
+        for (Iterator<Type> remover = canonical.iterator(); remover.hasNext();) {
+          Type b = remover.next();
+          if (!b.equals(a) && isSubtype(a, b)) {
+            remover.remove();
+          }
+        }
       }
-      if (canonical.isEmpty()) {
-        // This is impossible, right?  As long as the caller didn't pass us an empty set?
-        throw new IllegalArgumentException("No common subtype in bounds " + types);
+      if (canonical.isEmpty()) { // impossible
+        throw new AssertionError();
       }
       if (canonical.size() == 1) {
         return canonical.iterator().next();
@@ -878,7 +947,8 @@ public final class TypeResolver {
       return newIntersectionType(canonical);
     }
 
-    private static Type mergeSupertypeOf(Set<Type> types) {
+    /** Returns a type that is a supertype of all of the specified types. */
+    private static Type reduceSupertypeOfTypes(Set<Type> types) {
       checkNotNull(types);
       checkArgument(!types.isEmpty());
       if (types.size() == 1) {
@@ -894,48 +964,29 @@ public final class TypeResolver {
         throw new IllegalArgumentException("No common supertype in bounds " + types);
       }
       // Remove redundant supertypes.
-      for (Type a : new LinkedHashSet<>(supertypes)) {
-        supertypes.removeIf(b -> !b.equals(a) && TypeToken.of(a).isSubtypeOf(b));
-      }
-      if (supertypes.isEmpty()) {
-        return Object.class;
-      }
-      if (supertypes.size() == 1) {
-        return supertypes.iterator().next();
-      }
-      return newIntersectionType(supertypes);
-    }
-
-    private static Set<Type> getSupertypes(Type type) {
-      Set<Type> supertypes = new LinkedHashSet<>();
-      for (TypeToken<?> supertype : TypeToken.of(type).getTypes()) {
-        supertypes.add(supertype.getType());
-        //
-        // We also need to inspect the raw types.  Suppose that our bounds
-        // contain String and Integer.  String is Comparable<String>, and
-        // Integer is Comparable<Integer>.  They don't share either one of those
-        // parameterized types, but they do share Comparable<?>.
-        //
-        Class<?> rawType = supertype.getRawType();
-        TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
-        if (typeParameters.length == 0) {
-          supertypes.add(rawType);
-        } else {
-          Type[] typeArguments = new Type[typeParameters.length];
-          for (int i = 0; i < typeParameters.length; i++) {
-            typeArguments[i] =
-                new Types.WildcardTypeImpl(
-                    new Type[0],
-                    typeParameters[i].getBounds());
+      Set<Type> canonical = new LinkedHashSet<>(supertypes);
+      for (Type a : supertypes) {
+        for (Iterator<Type> remover = canonical.iterator(); remover.hasNext();) {
+          Type b = remover.next();
+          if (!b.equals(a) && isSubtype(a, b)) {
+            remover.remove();
           }
-          ParameterizedType parameterizedType =
-              Types.newParameterizedType(rawType, typeArguments);
-          supertypes.add(parameterizedType);
         }
       }
-      return supertypes;
+      if (canonical.isEmpty()) { // impossible
+        throw new AssertionError();
+      }
+      if (canonical.size() == 1) {
+        return canonical.iterator().next();
+      }
+      return newIntersectionType(canonical);
     }
 
+    /**
+     * Returns a type representing the intersection of all of the specified types.
+     *
+     * @throws IllegalArgumentException if there are fewer than two types
+     */
     // TODO: Explain why we use a wildcard.
     // TODO: Explain why using a wildcard here means we have to flatten wildcards elsewhere.
     private static Type newIntersectionType(Set<Type> types) {
@@ -949,308 +1000,447 @@ public final class TypeResolver {
 
   /** Constraints for many {@link TypeVariable}s. */
   private static final class Constraints {
-    private final Set<Seen> seen = new LinkedHashSet<>();
-    private final Map<TypeVariableKey, Constraint> constraints = new LinkedHashMap<>();
-    private final boolean typeVarParamsMayEqualWildcards;
+    private final Map<TypeVariableKey, Constraint> keyToConstraint = new LinkedHashMap<>();
 
-    Constraints() {
-      this.typeVarParamsMayEqualWildcards = false;
-    }
-
-    Constraints(boolean typeVarParamsMayEqualWildcards) {
-      this.typeVarParamsMayEqualWildcards = typeVarParamsMayEqualWildcards;
-    }
-
+    /**
+     * Deduces the type of the specified type variable from its constraints.  Returns {@code null}
+     * if nothing is known about the type variable.
+     */
     @Nullable Type get(TypeVariableKey key) {
       checkNotNull(key);
-      Constraint constraint = constraints.get(key);
+      Constraint constraint = keyToConstraint.get(key);
       return (constraint == null) ? null : constraint.get();
     }
 
-    // TODO: Separate this method into a ConstraintsBuilder class.
-    // TODO: Rename this method and the methods it calls to use some prefix other than "set".
-    void set(Type from, ConstraintKind kind, Type to) {
-      //System.out.println("set " + from + " " + kind + " " + to);
-      checkNotNull(from);
+    /**
+     * Adds the specified constraint to this instance.
+     *
+     * @param key the type variable
+     * @param kind the relationship between the type variable and the specified type
+     * @param type the type to associated with the type variable
+     */
+    void put(TypeVariableKey key, ConstraintKind kind, Type type) {
+      checkNotNull(key);
       checkNotNull(kind);
-      checkNotNull(to);
-      if (from.equals(to)) {
-        return;
+      checkNotNull(type);
+      Constraint thisConstraint = this.keyToConstraint.get(key);
+      if (thisConstraint == null) {
+        thisConstraint = new Constraint(key);
+        this.keyToConstraint.put(key, thisConstraint);
       }
-      if (!seen.add(new Seen(from, kind, to))) {
-        return;
+      switch (kind) {
+        case EQUAL_TO:
+          thisConstraint.setEqualTo(type);
+          return;
+        case RELATED_TO:
+          thisConstraint.setRelatedTo(type);
+          return;
+        case SUBTYPE_OF:
+          thisConstraint.setSubtypeOf(type);
+          return;
+        case SUPERTYPE_OF:
+          thisConstraint.setSupertypeOf(type);
+          return;
       }
-      if (from instanceof TypeVariable) {
-        setTypeVariable((TypeVariable<?>) from, kind, to);
-      } else if (from instanceof WildcardType) {
-        setWildcardType((WildcardType) from, kind, to);
-      } else if (from instanceof ParameterizedType) {
-        setParameterizedType((ParameterizedType) from, kind, to);
-      } else if (from instanceof GenericArrayType) {
-        setGenericArrayType((GenericArrayType) from, kind, to);
-      } else if (from instanceof Class) {
-        setClass((Class<?>) from, kind, to);
-      } else {
-        throw new AssertionError("Unknown type: " + from);
+      throw new AssertionError("Unknown constraint kind " + kind);
+    }
+
+    /** Adds all of the specified constraints to this instance. */
+    private void putAll(Constraints that) {
+      checkNotNull(that);
+      for (Map.Entry<TypeVariableKey, Constraint> entry : that.keyToConstraint
+          .entrySet()) {
+        TypeVariableKey key = entry.getKey();
+        Constraint thatConstraint = entry.getValue();
+        Constraint thisConstraint = this.keyToConstraint.get(key);
+        if (thisConstraint == null) {
+          thisConstraint = new Constraint(key);
+          this.keyToConstraint.put(key, thisConstraint);
+        }
+        thisConstraint.setAll(thatConstraint);
       }
     }
 
-    private void setTypeVariable(TypeVariable<?> from, ConstraintKind kind, Type to) {
-      TypeVariableKey key = new TypeVariableKey(from);
-      set(key, kind, to);
-      for (Type bound : from.getBounds()) {
-        if (bound instanceof Class) {
+    /**
+     * Returns the combination of the specified constraints.
+     *
+     * @throws IllegalArgumentException if the specified constraints are incompatible with each
+     *         other
+     */
+    static Constraints combine(Constraints a, Constraints b) {
+      checkNotNull(a);
+      checkNotNull(b);
+      Constraints combined = new Constraints();
+      combined.putAll(a);
+      combined.putAll(b);
+      return combined;
+    }
+
+    /**
+     * Returns the constraints that result from supplying an argument of type {@code actual} in a
+     * position that expects {@code formal}.  For example, {@code actual} may be a method argument
+     * type while {@code formal} is the declared method parameter type.
+     *
+     * @throws IllegalArgumentException if the type argument is invalid
+     */
+    static Constraints fromTypeArgument(Type formal, Type actual) {
+      checkNotNull(formal);
+      checkNotNull(actual);
+      ConstraintsBuilder builder = new ConstraintsBuilder(false);
+      builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
+      return builder.constraints;
+    }
+
+    /**
+     * Returns the constraints that result from declaring {@code actual} as a subtype of {@code
+     * formal}.  For example, {@code actual} may be the actual type of a variable containing an
+     * instance of a class while {@code formal} is the declared type of that class.
+     *
+     * @throws IllegalArgumentException if the type declaration is invalid
+     */
+    static Constraints fromTypeDeclaration(Type formal, Type actual) {
+      checkNotNull(formal);
+      checkNotNull(actual);
+      ConstraintsBuilder builder = new ConstraintsBuilder(true);
+      builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
+      return builder.constraints;
+    }
+  }
+
+  private static final class ConstraintsBuilder {
+    final Constraints constraints = new Constraints();
+    private final Set<Seen> seen = new LinkedHashSet<>();
+    private final boolean isForTypeDeclaration;
+
+    ConstraintsBuilder(boolean isForTypeDeclaration) {
+      this.isForTypeDeclaration = isForTypeDeclaration;
+    }
+
+    void visit(Type formal, ConstraintKind kind, Type actual) {
+      //System.out.println("set " + formal + " " + kind + " " + actual);
+      checkNotNull(formal);
+      checkNotNull(kind);
+      checkNotNull(actual);
+      if (formal.equals(actual)) {
+        return;
+      }
+      if (!seen.add(new Seen(formal, kind, actual))) {
+        return;
+      }
+      if (formal instanceof TypeVariable) {
+        visitTypeVariable((TypeVariable<?>) formal, kind, actual);
+      } else if (formal instanceof WildcardType) {
+        visitWildcardType((WildcardType) formal, kind, actual);
+      } else if (formal instanceof ParameterizedType) {
+        visitParameterizedType((ParameterizedType) formal, kind, actual);
+      } else if (formal instanceof GenericArrayType) {
+        visitGenericArrayType((GenericArrayType) formal, kind, actual);
+      } else if (formal instanceof Class) {
+        visitClass((Class<?>) formal, kind, actual);
+      } else {
+        throw new AssertionError("Unknown type: " + formal);
+      }
+    }
+
+    private void visitTypeVariable(TypeVariable<?> formal, ConstraintKind kind, Type actual) {
+      TypeVariableKey key = new TypeVariableKey(formal);
+      constraints.put(key, kind, actual);
+      for (Type formalBound : formal.getBounds()) {
+        if (formalBound instanceof Class) {
           // The Object.class bound is redundant, and it causes problems
           // when binding T[] to int[].
-          if (!bound.equals(Object.class)) {
-            set(key, ConstraintKind.SUBTYPE_OF, bound);
+          if (!formalBound.equals(Object.class)) {
+            constraints.put(key, ConstraintKind.SUBTYPE_OF, formalBound);
           }
         } else {
           ConstraintKind kindForBound = constraintKindForBound(kind);
-          if (bound instanceof TypeVariable || !kindForBound.equals(ConstraintKind.RELATED_TO)) {
-            set(bound, kindForBound, to);
+          if (formalBound instanceof TypeVariable
+              || !kindForBound.equals(ConstraintKind.RELATED_TO)) {
+            visit(formalBound, kindForBound, actual);
           }
         }
       }
     }
 
-    private void setWildcardType(WildcardType from, ConstraintKind kind, Type to) {
-      if (!(to instanceof WildcardType)) {
-        for (Type fromLowerBound : from.getLowerBounds()) {
-          if (!(fromLowerBound instanceof Class)) {
-            set(fromLowerBound, ConstraintKind.SUBTYPE_OF, to);
+    private void visitWildcardType(WildcardType formal, ConstraintKind kind, Type actual) {
+      if (!(actual instanceof WildcardType)) {
+        for (Type formalLowerBound : formal.getLowerBounds()) {
+          if (!(formalLowerBound instanceof Class)) {
+            visit(formalLowerBound, ConstraintKind.SUBTYPE_OF, actual);
           }
         }
-        for (Type fromUpperBound : from.getUpperBounds()) {
-          if (!(fromUpperBound instanceof Class)) {
-            set(fromUpperBound, ConstraintKind.SUPERTYPE_OF, to);
+        for (Type formalUpperBound : formal.getUpperBounds()) {
+          if (!(formalUpperBound instanceof Class)) {
+            visit(formalUpperBound, ConstraintKind.SUPERTYPE_OF, actual);
           }
         }
         return;
       }
-      WildcardType toWildcardType = (WildcardType) to;
-      Type[] fromUpperBounds = from.getUpperBounds();
-      Type[] toUpperBounds = toWildcardType.getUpperBounds();
-      Type[] fromLowerBounds = from.getLowerBounds();
-      Type[] toLowerBounds = toWildcardType.getLowerBounds();
+      WildcardType actualWildcardType = (WildcardType) actual;
+      Type[] formalUpperBounds = formal.getUpperBounds();
+      Type[] actualUpperBounds = actualWildcardType.getUpperBounds();
+      Type[] formalLowerBounds = formal.getLowerBounds();
+      Type[] actualLowerBounds = actualWildcardType.getLowerBounds();
       checkArgument(
-          fromUpperBounds.length == toUpperBounds.length
-              && fromLowerBounds.length == toLowerBounds.length,
+          formalUpperBounds.length == actualUpperBounds.length
+              && formalLowerBounds.length == actualLowerBounds.length,
           "Incompatible type: %s vs. %s",
-          from,
-          to);
-      for (int i = 0; i < fromLowerBounds.length; i++) {
-        set(fromLowerBounds[i], ConstraintKind.SUBTYPE_OF, toLowerBounds[i]);
+          formal,
+          actual);
+      for (int i = 0; i < formalLowerBounds.length; i++) {
+        visit(formalLowerBounds[i], ConstraintKind.SUBTYPE_OF, actualLowerBounds[i]);
       }
-      for (int i = 0; i < fromUpperBounds.length; i++) {
-        set(fromUpperBounds[i], ConstraintKind.SUPERTYPE_OF, toUpperBounds[i]);
+      for (int i = 0; i < formalUpperBounds.length; i++) {
+        visit(formalUpperBounds[i], ConstraintKind.SUPERTYPE_OF, actualUpperBounds[i]);
       }
     }
 
-    private void setParameterizedType(ParameterizedType from, ConstraintKind kind, Type to) {
+    private void visitParameterizedType(ParameterizedType formal, ConstraintKind kind, Type actual) {
       if (kind.equals(ConstraintKind.SUBTYPE_OF)) {
         // TODO: Write a test that enters this block, or figure out why that's impossible.
-        System.out.println(from + " " + kind + " " + to);
+        System.out.println(formal + " " + kind + " " + actual);
       }
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        Type[] toLowerBounds = toWildcardType.getLowerBounds();
-        Type[] toUpperBounds = toWildcardType.getUpperBounds();
-        for (Type toLowerBound : toLowerBounds) {
-          set(from, ConstraintKind.SUPERTYPE_OF, toLowerBound);
+      if (actual instanceof WildcardType) {
+        WildcardType actualWildcardType = (WildcardType) actual;
+        Type[] actualLowerBounds = actualWildcardType.getLowerBounds();
+        Type[] actualUpperBounds = actualWildcardType.getUpperBounds();
+        for (Type actualLowerBound : actualLowerBounds) {
+          visit(formal, ConstraintKind.SUPERTYPE_OF, actualLowerBound);
         }
-        for (Type toUpperBound : toUpperBounds) {
-          if (!toUpperBound.equals(Object.class)) {
-            set(from, ConstraintKind.SUBTYPE_OF, toUpperBound);
+        for (Type actualUpperBound : actualUpperBounds) {
+          if (!actualUpperBound.equals(Object.class)) {
+            visit(formal, ConstraintKind.SUBTYPE_OF, actualUpperBound);
           }
         }
         return; // Okay to say Foo<A> is <?>
       }
-      if (to instanceof Class && from.getRawType().equals(Class.class)) {
-        // from=Class<K extends Enum<K>>, to=java.util.concurrent.TimeUnit
-        set(from.getActualTypeArguments()[0], ConstraintKind.EQUAL_TO, to);
+      if (actual instanceof Class && formal.getRawType().equals(Class.class)) {
+        // formal=Class<K extends Enum<K>>, actual=TimeUnit
+        visit(formal.getActualTypeArguments()[0], ConstraintKind.EQUAL_TO, actual);
         return;
       }
-      ParameterizedType toParameterizedType;
-      if (to instanceof Class) {
-        // from=Comparable<? super T>, to=Integer
-        toParameterizedType = getParameterizedSupertype((Class<?>) to, from);
+      ParameterizedType actualParameterizedType;
+      if (actual instanceof Class) {
+        // formal=Comparable<? super T>, actual=Integer
+        actualParameterizedType = getParameterizedSupertype((Class<?>) actual, formal);
       } else {
         checkArgument(
-            to instanceof ParameterizedType,
+            actual instanceof ParameterizedType,
             "%s is not a parameterized type",
-            to.getTypeName());
-        toParameterizedType = (ParameterizedType) to;
+            actual.getTypeName());
+        actualParameterizedType = (ParameterizedType) actual;
       }
-      Class<?> fromRawType = (Class<?>) from.getRawType();
-      Class<?> toRawType = (Class<?>) toParameterizedType.getRawType();
+      Class<?> formalRawType = (Class<?>) formal.getRawType();
+      Class<?> actualRawType = (Class<?>) actualParameterizedType.getRawType();
       if (kind.equals(ConstraintKind.EQUAL_TO)) {
         checkArgument(
-            fromRawType.equals(toRawType),
+            formalRawType.equals(actualRawType),
             "Inconsistent raw type: %s vs. %s",
-            from.getTypeName(),
-            toParameterizedType.getTypeName());
+            formal.getTypeName(),
+            actualParameterizedType.getTypeName());
       } else {
         checkArgument(
-            fromRawType.isAssignableFrom(toRawType),
+            formalRawType.isAssignableFrom(actualRawType),
             "Inconsistent raw type: %s vs. %s",
-            from.getTypeName(),
-            toParameterizedType.getTypeName());
+            formal.getTypeName(),
+            actualParameterizedType.getTypeName());
       }
-      Type[] fromArgs = from.getActualTypeArguments();
-      Type[] toArgs = toParameterizedType.getActualTypeArguments();
+      Type[] formalArguments = formal.getActualTypeArguments();
+      Type[] actualArguments = actualParameterizedType.getActualTypeArguments();
       checkArgument(
-          fromArgs.length == toArgs.length,
+          formalArguments.length == actualArguments.length,
           "%s not compatible with %s",
-          from,
-          toParameterizedType);
-      Type fromOwnerType = from.getOwnerType();
-      Type toOwnerType = toParameterizedType.getOwnerType();
-      if (fromOwnerType != null && toOwnerType != null) {
-        set(fromOwnerType, kind, toOwnerType);
+          formal,
+          actualParameterizedType);
+      Type formalOwnerType = formal.getOwnerType();
+      Type actualOwnerType = actualParameterizedType.getOwnerType();
+      if (formalOwnerType != null && actualOwnerType != null) {
+        visit(formalOwnerType, kind, actualOwnerType);
       }
-      for (int i = 0; i < fromArgs.length; i++) {
-        Type fromArg = fromArgs[i];
-        Type toArg = toArgs[i];
-        if (fromArg instanceof TypeVariable) {
+      for (int i = 0; i < formalArguments.length; i++) {
+        Type formalArgument = formalArguments[i];
+        Type actualArgument = actualArguments[i];
+        if (formalArgument instanceof TypeVariable) {
           checkArgument(
-              !(toArg instanceof WildcardType)
+              !(actualArgument instanceof WildcardType)
                   || !kind.equals(ConstraintKind.EQUAL_TO)
-                  || typeVarParamsMayEqualWildcards,
+                  || isForTypeDeclaration,
               "%s not compatible with %s because parameter %s at index %s "
                   + "is not compatible with argument %s",
-              from.getTypeName(),
-              to.getTypeName(),
-              fromArg.getTypeName(),
+              formal.getTypeName(),
+              actual.getTypeName(),
+              formalArgument.getTypeName(),
               i,
-              toArg.getTypeName());
+              actualArgument.getTypeName());
         }
-        if (fromArg instanceof WildcardType) {
+        if (formalArgument instanceof WildcardType) {
           checkArgument(
-              toArg instanceof WildcardType
+              actualArgument instanceof WildcardType
                   || !kind.equals(ConstraintKind.EQUAL_TO),
               "%s not compatible with %s because parameter %s at index %s "
                   + "is not compatible with argument %s",
-              from.getTypeName(),
-              to.getTypeName(),
-              fromArg.getTypeName(),
+              formal.getTypeName(),
+              actual.getTypeName(),
+              formalArgument.getTypeName(),
               i,
-              toArg.getTypeName());
+              actualArgument.getTypeName());
         }
-        if (toArg instanceof WildcardType) {
+        if (actualArgument instanceof WildcardType) {
           checkArgument(
-              fromArg instanceof Class
-                  || fromArg instanceof WildcardType
-                  || fromArg instanceof TypeVariable,
+              formalArgument instanceof Class
+                  || formalArgument instanceof WildcardType
+                  || formalArgument instanceof TypeVariable,
               "%s not compatible with %s because parameter %s at index %s "
                   + "is not compatible with argument capture of %s",
-              from.getTypeName(),
-              to.getTypeName(),
-              fromArg.getTypeName(),
+              formal.getTypeName(),
+              actual.getTypeName(),
+              formalArgument.getTypeName(),
               i,
-              toArg.getTypeName());
+              actualArgument.getTypeName());
         }
-        set(fromArg, ConstraintKind.EQUAL_TO, toArg);
+        visit(formalArgument, ConstraintKind.EQUAL_TO, actualArgument);
       }
     }
 
-    private void setGenericArrayType(GenericArrayType from, ConstraintKind kind, Type to) {
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        Type[] toLowerBounds = toWildcardType.getLowerBounds();
-        Type[] toUpperBounds = toWildcardType.getUpperBounds();
-        for (Type toLowerBound : toLowerBounds) {
-          set(from, ConstraintKind.SUPERTYPE_OF, toLowerBound);
+    private void visitGenericArrayType(GenericArrayType formal, ConstraintKind kind, Type actual) {
+      if (actual instanceof WildcardType) {
+        WildcardType actualWildcardType = (WildcardType) actual;
+        Type[] actualLowerBounds = actualWildcardType.getLowerBounds();
+        Type[] actualUpperBounds = actualWildcardType.getUpperBounds();
+        for (Type actualLowerBound : actualLowerBounds) {
+          visit(formal, ConstraintKind.SUPERTYPE_OF, actualLowerBound);
         }
-        for (Type toUpperBound : toUpperBounds) {
-          if (!toUpperBound.equals(Object.class)) {
-            set(from, ConstraintKind.SUBTYPE_OF, toUpperBound);
+        for (Type actualUpperBound : actualUpperBounds) {
+          if (!actualUpperBound.equals(Object.class)) {
+            visit(formal, ConstraintKind.SUBTYPE_OF, actualUpperBound);
           }
         }
         return; // Okay to say A[] is <?>
       }
-      Type componentType = Types.getComponentType(to);
-      checkArgument(componentType != null, "%s is not an array type.", to);
-      set(from.getGenericComponentType(), kind, componentType);
+      Type actualComponentType = Types.getComponentType(actual);
+      checkArgument(actualComponentType != null, "%s is not an array type.", actual);
+      visit(formal.getGenericComponentType(), kind, actualComponentType);
     }
 
-    private void setClass(Class<?> from, ConstraintKind kind, Type to) {
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        Type[] toLowerBounds = toWildcardType.getLowerBounds();
-        Type[] toUpperBounds = toWildcardType.getUpperBounds();
-        for (Type toLowerBound : toLowerBounds) {
+    private void visitClass(Class<?> formal, ConstraintKind kind, Type actual) {
+      if (actual instanceof WildcardType) {
+        WildcardType actualWildcardType = (WildcardType) actual;
+        Type[] actualLowerBounds = actualWildcardType.getLowerBounds();
+        Type[] actualUpperBounds = actualWildcardType.getUpperBounds();
+        for (Type actualLowerBound : actualLowerBounds) {
           checkArgument(
-              isPossibleToSubtypeBoth(from, toLowerBound),
+              isPossibleToSubtypeBoth(formal, actualLowerBound),
               "Type %s is incompatible with lower bound %s of wildcard type %s",
-              from.getTypeName(),
-              toLowerBound.getTypeName(),
-              to.getTypeName());
+              formal.getTypeName(),
+              actualLowerBound.getTypeName(),
+              actual.getTypeName());
         }
-        for (Type toUpperBound : toUpperBounds) {
+        for (Type actualUpperBound : actualUpperBounds) {
           checkArgument(
-              TypeToken.of(from).isSubtypeOf(toUpperBound),
+              isSubtype(formal, actualUpperBound),
               "Type %s is incompatible with upper bound %s of wildcard type %s",
-              from.getTypeName(),
-              toUpperBound.getTypeName(),
-              to.getTypeName());
+              formal.getTypeName(),
+              actualUpperBound.getTypeName(),
+              actual.getTypeName());
         }
         return; // Okay to say Foo is <?>
       }
       // Can't map from a raw class to anything other than itself or a wildcard.
       // You can't say "assuming String is Integer".
       // And we don't support "assuming String is T"; user has to say "assuming T is String".
-      throw new IllegalArgumentException("No type mapping from " + from + " to " + to);
+      throw new IllegalArgumentException("No type mapping from " + formal + " to " + actual);
     }
 
-    void set(TypeVariableKey key, ConstraintKind kind, Type type) {
-      checkNotNull(key);
-      checkNotNull(kind);
-      checkNotNull(type);
-      constraints.computeIfAbsent(key, Constraint::new).set(kind, type);
-    }
-
-    private void set(Constraints that) {
-      checkNotNull(that);
-      this.seen.addAll(that.seen);
-      that.constraints.forEach(
-          (key, thatConstraint) -> {
-            Constraint thisConstraint = this.constraints.get(key);
-            if (thisConstraint == null) {
-              thisConstraint = new Constraint(key);
-              this.constraints.put(key, thisConstraint);
-            }
-            thisConstraint.set(thatConstraint);
-          });
-    }
-
-    static Constraints combine(Constraints a, Constraints b) {
-      checkNotNull(a);
-      checkNotNull(b);
-      Constraints sum = new Constraints();
-      sum.set(a);
-      sum.set(b);
-      return sum;
+    private static ConstraintKind constraintKindForBound(ConstraintKind kind) {
+      switch (kind) {
+        case EQUAL_TO:
+          // formal=B
+          // kind=EQUAL_TO
+          // actual=Integer
+          // B == Integer
+          //
+          // formalBound=A
+          // B extends A
+          // -----> Integer extends A
+          // -----> Integer is a subtype of A
+          //
+          // same logic as UPPER_BOUND case
+          //
+          // (fallthrough)
+          //
+        case SUPERTYPE_OF:
+          // formal=U
+          // kind=SUPERTYPE_OF
+          // actual=Integer
+          // "Integer is something that extends U"
+          // "Integer is a subtype of U"
+          //
+          // formalBound=T
+          // "U extends T"
+          // ----> "Integer is a subtype of T"
+          //
+          return ConstraintKind.SUPERTYPE_OF;
+        case SUBTYPE_OF:
+          // formal=U
+          // kind=SUBTYPE_OF
+          // actual=Number
+          // "Number is something that is a supertype of U"
+          // "Number is a supertype of U"
+          // "U extends Number"
+          //
+          // formalBound=T
+          // "U extends T"
+          // "U is a subtype of T"
+          // "T is a supertype of U"
+          // anything we can conclude about T w.r.t Number?
+          // it can't be totally unrelated to Number, right?
+          // it has to be either a supertype of Number or a subtype of Number?
+          //   T=Integer works, T=Object works?, T=String doesn't work, right?
+          //         yes              yes          right
+          // so T is RELATED to Number
+          //
+          // (fallthrough)
+          //
+        case RELATED_TO:
+          //
+          // formal=A
+          // kind=RELATED_TYPE
+          // actual=Number
+          // "A extends Number or Number extends A"
+          //
+          // formalBound=B
+          // A extends B
+          //
+          // Could B be String?
+          // no
+          // could B be Object?
+          // yes
+          // could B be Integer?
+          // yes
+          //
+          return ConstraintKind.RELATED_TO;
+      }
+      throw new AssertionError("Unknown constraint kind " + kind);
     }
 
     private static final class Seen {
-      private final Type from;
+      private final Type formal;
       private final ConstraintKind kind;
-      private final Type to;
+      private final Type actual;
 
-      Seen(Type from, ConstraintKind kind, Type to) {
-        this.from = checkNotNull(from);
+      Seen(Type formal, ConstraintKind kind, Type actual) {
+        this.formal = checkNotNull(formal);
         this.kind = checkNotNull(kind);
-        this.to = checkNotNull(to);
+        this.actual = checkNotNull(actual);
       }
 
       @Override
       public boolean equals(@Nullable Object object) {
         if (object instanceof Seen) {
           Seen that = (Seen) object;
-          return this.from.equals(that.from)
+          return this.formal.equals(that.formal)
               && this.kind.equals(that.kind)
-              && this.to.equals(that.to);
+              && this.actual.equals(that.actual);
         } else {
           return false;
         }
@@ -1258,18 +1448,34 @@ public final class TypeResolver {
 
       @Override
       public int hashCode() {
-        return Objects.hashCode(from, kind, to);
+        return Objects.hashCode(formal, kind, actual);
       }
     }
   }
 
+  /**
+   * Returns {@code true} if it is possible for any type to be a subtype of both {@code a} and
+   * {@code b}.
+   */
+  private static boolean isPossibleToSubtypeBoth(Type a, Type b) {
+    checkNotNull(a);
+    checkNotNull(b);
+    return (a instanceof Class && ((Class<?>) a).isInterface())
+        || (b instanceof Class && ((Class<?>) b).isInterface())
+        || isSubtype(a, b)
+        || isSubtype(b, a);
+  }
+
+  /**
+   * Returns the parameterized supertype of {@code subtype} having the same raw class as {@code
+   * supertype}.
+   *
+   * @throws IllegalArgumentException if no such supertype exists
+   */
   private static ParameterizedType getParameterizedSupertype(
       Class<?> subtype, ParameterizedType supertype) {
     checkNotNull(subtype);
     checkNotNull(supertype);
-    // Avoid TypeToken.of(subtype).getSupertype((Class) supertype.getRawType())
-    // in order to avoid an uncomfortable circular dependency between TypeToken
-    // and TypeResolver.
     Class<?> targetClass = (Class<?>) supertype.getRawType();
     Set<Type> seen = new HashSet<>();
     Deque<Type> todo = new ArrayDeque<>();
@@ -1301,84 +1507,44 @@ public final class TypeResolver {
         supertype.getTypeName() + " is not a supertype of " + subtype.getTypeName());
   }
 
-  private static boolean isPossibleToSubtypeBoth(Type a, Type b) {
+  /** Returns {@code true} if {@code a} is a subtype of {@code b}. */
+  private static boolean isSubtype(Type a, Type b) {
     checkNotNull(a);
     checkNotNull(b);
-    return (a instanceof Class && ((Class<?>) a).isInterface())
-        || (b instanceof Class && ((Class<?>) b).isInterface())
-        || TypeToken.of(a).isSubtypeOf(b)
-        || TypeToken.of(b).isSubtypeOf(a);
+    // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
+    return TypeToken.of(a).isSubtypeOf(b);
   }
 
-  private static ConstraintKind constraintKindForBound(ConstraintKind kind) {
-    switch (kind) {
-      case EQUAL_TO:
-        // key=B
-        // kind=EQUAL_TO
-        // to=Integer
-        // B == Integer
-        //
-        // boundVar=A
-        // B extends A
-        // -----> Integer extends A
-        // -----> Integer is a subtype of A
-        //
-        // same logic as UPPER_BOUND case
-        //
-        // (fallthrough)
-        //
-      case SUPERTYPE_OF:
-        // key=U
-        // kind=SUPERTYPE_OF
-        // to=Integer
-        // "Integer is something that extends U"
-        // "Integer is a subtype of U"
-        //
-        // boundVar=T
-        // "U extends T"
-        // ----> "Integer is a subtype of T"
-        //
-        return ConstraintKind.SUPERTYPE_OF;
-      case SUBTYPE_OF:
-        // key=U
-        // kind=SUBTYPE_OF
-        // to=Number
-        // "Number is something that is a supertype of U"
-        // "Number is a supertype of U"
-        // "U extends Number"
-        //
-        // boundVar=T
-        // "U extends T"
-        // "U is a subtype of T"
-        // "T is a supertype of U"
-        // anything we can conclude about T w.r.t Number?
-        // it can't be totally unrelated to Number, right?
-        // it has to be either a supertype of Number or a subtype of Number?
-        //   T=Integer works, T=Object works?, T=String doesn't work, right?
-        //         yes              yes          right
-        // so T is RELATED to Number
-        //
-        // (fallthrough)
-        //
-      case RELATED_TO:
-        //
-        // key=A
-        // kind=RELATED_TYPE
-        // to=Number
-        // "A extends Number or Number extends A"
-        //
-        // boundVar=B
-        // A extends B
-        //
-        // Could B be String?
-        // no
-        // could B be Object?
-        // yes
-        // could B be Integer?
-        // yes
-        //
-        return ConstraintKind.RELATED_TO;
+  /** Returns the supertypes of the specified type, including raw types. */
+  private static Set<Type> getSupertypes(Type type) {
+    checkNotNull(type);
+    Set<Type> supertypes = new LinkedHashSet<>();
+    // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
+    for (TypeToken<?> supertype : TypeToken.of(type).getTypes()) {
+      supertypes.add(supertype.getType());
+      //
+      // We also need to inspect the raw types.  Suppose that our bounds
+      // contain String and Integer.  String is Comparable<String>, and
+      // Integer is Comparable<Integer>.  They don't share either one of those
+      // parameterized types, but they do share Comparable<?>.
+      //
+      Class<?> rawType = supertype.getRawType();
+      TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
+      if (typeParameters.length == 0) {
+        supertypes.add(rawType);
+      } else {
+        Type[] typeArguments = new Type[typeParameters.length];
+        for (int i = 0; i < typeParameters.length; i++) {
+          typeArguments[i] =
+              new Types.WildcardTypeImpl(
+                  new Type[0],
+                  typeParameters[i].getBounds());
+        }
+        ParameterizedType parameterizedType =
+            Types.newParameterizedType(rawType, typeArguments);
+        supertypes.add(parameterizedType);
+      }
     }
-    throw new AssertionError("Unknown constraint kind " + kind);
+    return supertypes;
   }
 }
