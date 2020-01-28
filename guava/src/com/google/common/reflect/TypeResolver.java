@@ -21,10 +21,13 @@ import static java.util.Arrays.asList;
 
 import com.google.common.annotations.Beta;
 import com.google.common.base.Joiner;
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Objects;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import java.lang.reflect.GenericArrayType;
+import java.lang.reflect.GenericDeclaration;
+import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
@@ -180,7 +183,6 @@ public final class TypeResolver {
     Type owner = type.getOwnerType();
     Type resolvedOwner = (owner == null) ? null : resolveType(owner);
     Type resolvedRawType = resolveType(type.getRawType());
-
     Type[] args = type.getActualTypeArguments();
     Type[] resolvedArgs = resolveTypes(args);
     return Types.newParameterizedTypeWithOwner(
@@ -191,79 +193,8 @@ public final class TypeResolver {
     Type[] lowerBounds = type.getLowerBounds();
     Type[] upperBounds = type.getUpperBounds();
     return new Types.WildcardTypeImpl(
-        flattenWildcardLowerBounds(resolveTypes(lowerBounds)),
-        flattenWildcardUpperBounds(resolveTypes(upperBounds)));
-  }
-
-  // TODO: Explain why flattening wildcards is necessary.
-  private static boolean FLATTEN_WILDCARDS = true;
-
-  private static Type[] flattenWildcardLowerBounds(Type[] lowerBounds) {
-    if (!FLATTEN_WILDCARDS) {
-      return lowerBounds;
-    }
-    Set<Type> flat = null;
-    for (int i = 0; i < lowerBounds.length; i++) {
-      Type type = lowerBounds[i];
-      if (!(type instanceof WildcardType)) {
-        if (flat != null) {
-          flat.add(type);
-        }
-        continue;
-      }
-      WildcardType nested = (WildcardType) type;
-      Type[] nestedLowerBounds = nested.getLowerBounds();
-      Type[] nestedUpperBounds = nested.getUpperBounds();
-      if (flat == null) {
-        flat = new LinkedHashSet<>(Arrays.asList(lowerBounds).subList(0, i));
-      }
-      // ? super ? ---> ? super Object
-      if (nestedLowerBounds.length == 0) {
-        if ((nestedUpperBounds.length == 1 && nestedUpperBounds[0].equals(Object.class))
-            || nestedUpperBounds.length == 0) {
-          // TODO: Is this case possible?
-          System.out.println("In this case we didn't know was possible!!!");
-          flat.add(Object.class);
-          continue;
-        }
-      }
-      // ? super ? super Number ---> ? super Number
-      flat.addAll(Arrays.asList(nestedLowerBounds));
-
-      // ? super ? extends Number ---> ? super Number
-      for (Type nestedUpperBound : nestedUpperBounds) {
-        if (!nestedUpperBound.equals(Object.class)) {
-          flat.add(nestedUpperBound);
-        }
-      }
-    }
-    return (flat == null) ? lowerBounds : flat.toArray(new Type[0]);
-  }
-
-  private static Type[] flattenWildcardUpperBounds(Type[] upperBounds) {
-    if (!FLATTEN_WILDCARDS) {
-      return upperBounds;
-    }
-    Set<Type> flat = null;
-    for (int i = 0; i < upperBounds.length; i++) {
-      Type type = upperBounds[i];
-      if (!(type instanceof WildcardType)) {
-        if (flat != null) {
-          flat.add(type);
-        }
-        continue;
-      }
-      WildcardType nested = (WildcardType) type;
-      if (flat == null) {
-        flat = new LinkedHashSet<>(Arrays.asList(upperBounds).subList(0, i));
-      }
-      // ? extends ? super Number ---> ? extends Object
-      // This is already implied, so no action is required.
-      //
-      // ? extends ? extends Number ---> ? extends Number
-      flat.addAll(Arrays.asList(nested.getUpperBounds()));
-    }
-    return (flat == null) ? upperBounds : flat.toArray(new Type[0]);
+        flattenIntersectionTypesInBounds(resolveTypes(lowerBounds)),
+        resolveTypes(upperBounds));
   }
 
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
@@ -620,6 +551,19 @@ public final class TypeResolver {
     private @Nullable Set<Type> subtypeOfTypes;
     private @Nullable Set<Type> supertypeOfTypes;
 
+    @Override
+    public String toString() {
+      return MoreObjects
+          .toStringHelper(this)
+          .omitNullValues()
+          .add("key", key + " (from " + key.var.getGenericDeclaration() + ")")
+          .add("equalToType", equalToType)
+          .add("relatedToTypes", relatedToTypes)
+          .add("subtypeOfTypes", subtypeOfTypes)
+          .add("supertypeOfTypes", supertypeOfTypes)
+          .toString();
+    }
+
     Constraint(TypeVariableKey key) {
       this.key = checkNotNull(key);
     }
@@ -931,22 +875,16 @@ public final class TypeResolver {
         return types.iterator().next();
       }
       // Remove redundant types.
-      Set<Type> canonical = new LinkedHashSet<>(types);
+      Set<Type> canonicalTypes = new LinkedHashSet<>(types);
       for (Type a : types) {
-        for (Iterator<Type> remover = canonical.iterator(); remover.hasNext();) {
+        for (Iterator<Type> remover = canonicalTypes.iterator(); remover.hasNext();) {
           Type b = remover.next();
           if (!b.equals(a) && isSubtype(a, b)) {
             remover.remove();
           }
         }
       }
-      if (canonical.isEmpty()) { // impossible
-        throw new AssertionError();
-      }
-      if (canonical.size() == 1) {
-        return canonical.iterator().next();
-      }
-      return newIntersectionType(canonical);
+      return newIntersectionType(canonicalTypes);
     }
 
     /**
@@ -956,6 +894,7 @@ public final class TypeResolver {
      *        that must not be resolved in order to avoid infinite recursion
      * @throws IllegalArgumentException if the set is empty
      */
+    // https://docs.oracle.com/javase/specs/jls/se13/html/jls-4.html#jls-4.10.4
     private static Type getSupertypeOfTypes(Set<Type> types, Set<Type> supertypesToAvoidResolving) {
       checkNotNull(types);
       checkArgument(!types.isEmpty());
@@ -963,51 +902,53 @@ public final class TypeResolver {
         return types.iterator().next();
       }
       Iterator<Type> iterator = types.iterator();
-      Set<Class<?>> rawSupertypes = new LinkedHashSet<>(getRawSupertypes(iterator.next()));
+      Set<Type> genericSupertypes = new LinkedHashSet<>(getGenericSupertypes(iterator.next()));
       while (iterator.hasNext()) {
-        rawSupertypes.retainAll(getRawSupertypes(iterator.next()));
+        genericSupertypes.retainAll(getGenericSupertypes(iterator.next()));
       }
-      if (rawSupertypes.isEmpty()) {
+      if (genericSupertypes.isEmpty()) {
         // Interfaces don't have Object as a supertype.
         return Object.class;
       }
       // Remove redundant supertypes.
-      Set<Class<?>> canonicalRaw = new LinkedHashSet<>(rawSupertypes);
-      for (Type a : rawSupertypes) {
-        for (Iterator<Class<?>> remover = canonicalRaw.iterator(); remover.hasNext();) {
+      Set<Type> canonicalGenericTypes = new LinkedHashSet<>(genericSupertypes);
+      for (Type a : genericSupertypes) {
+        for (Iterator<Type> remover = canonicalGenericTypes.iterator(); remover.hasNext();) {
           Type b = remover.next();
-          if (!b.equals(a) && isSubtype(a, b)) {
-            remover.remove();
+          if (!b.equals(a)) {
+            Class<?> aRaw = getRawType(a);
+            Class<?> bRaw = getRawType(b);
+            if (bRaw.isAssignableFrom(aRaw)) {
+              remover.remove();
+            }
           }
         }
       }
-      if (canonicalRaw.isEmpty()) { // impossible
-        throw new AssertionError();
-      }
-      Set<Type> canonicalGeneric = new LinkedHashSet<>();
-      for (Class<?> rawType : canonicalRaw) {
-        canonicalGeneric.add(getGenericType(rawType));
-      }
-      Type intersection =
-          (canonicalGeneric.size() == 1)
-              ? canonicalGeneric.iterator().next()
-              : newIntersectionType(canonicalGeneric);
+      Type genericIntersectionType = newIntersectionType(canonicalGenericTypes);
       ConstraintsBuilder builder = new ConstraintsBuilder();
       builder.isForSupertypeReduction = true;
       for (Type type : types) {
-        for (Type generic : canonicalGeneric) {
-          if (generic instanceof Class) {
+        for (Type genericType : canonicalGenericTypes) {
+          if (genericType instanceof Class) {
             continue;
           }
-          if (supertypesToAvoidResolving.contains(generic)) {
+          if (supertypesToAvoidResolving.contains(genericType)) {
             // We've already seen this generic type and we're already trying to
             // resolve it.  It's probably Comparable<T> and we're probably going
             // to end up with some type that looks like
             // "Foo & Comparable<? extends Foo & Comparable<?>>".
             // This logic here is responsible for inserting that last
             // "Comparable<?>" with a "?" for its type argument.
-            if (generic instanceof ParameterizedType) {
-              Class<?> rawType = (Class<?>) ((ParameterizedType) generic).getRawType();
+            //
+            // TODO: It's not clear this shouldn't result in an infinite type.
+            //       From the JLS on "least upper bound" (lub) computation:
+            //         "It is possible that the lub() function yields an
+            //         infinite type. This is permissible, and a compiler for
+            //         the Java programming language must recognize such
+            //         situations and represent them appropriately using cyclic
+            //         data structures."
+            if (genericType instanceof ParameterizedType) {
+              Class<?> rawType = (Class<?>) ((ParameterizedType) genericType).getRawType();
               TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
               Type[] typeArguments = new Type[typeParameters.length];
               for (int i = 0; i < typeParameters.length; i++) {
@@ -1017,34 +958,19 @@ public final class TypeResolver {
                         typeParameters[i].getBounds());
               }
               ParameterizedType withWildcards = Types.newParameterizedType(rawType, typeArguments);
-              builder.visit(generic, ConstraintKind.SUPERTYPE_OF, withWildcards);
+              builder.visit(genericType, ConstraintKind.SUPERTYPE_OF, withWildcards);
             }
             continue;
           }
-          builder.visit(generic, ConstraintKind.SUPERTYPE_OF, type);
+          builder.visit(genericType, ConstraintKind.SUPERTYPE_OF, type);
         }
       }
       Constraints constraints = builder.constraints;
       constraints.supertypesToAvoidResolving.addAll(supertypesToAvoidResolving);
-      constraints.supertypesToAvoidResolving.addAll(canonicalGeneric);
+      constraints.supertypesToAvoidResolving.addAll(canonicalGenericTypes);
       TypeTable typeTable = new TypeTable(constraints);
       TypeResolver resolver = new TypeResolver(typeTable);
-      return resolver.resolveType(intersection);
-    }
-
-    /**
-     * Returns a type representing the intersection of all of the specified types.
-     *
-     * @throws IllegalArgumentException if there are fewer than two types
-     */
-    // TODO: Explain why we use a wildcard.
-    // TODO: Explain why using a wildcard here means we have to flatten wildcards elsewhere.
-    private static Type newIntersectionType(Set<Type> types) {
-      checkNotNull(types);
-      checkArgument(types.size() > 1);
-      return new Types.WildcardTypeImpl(
-          new Type[0],
-          types.toArray(new Type[0]));
+      return resolver.resolveType(genericIntersectionType);
     }
   }
 
@@ -1052,6 +978,11 @@ public final class TypeResolver {
   private static final class Constraints {
     private final Map<TypeVariableKey, Constraint> keyToConstraint = new LinkedHashMap<>();
     private final Set<Type> supertypesToAvoidResolving = new LinkedHashSet<>();
+
+    @Override
+    public String toString() {
+      return keyToConstraint.values().toString();
+    }
 
     /**
      * Deduces the type of the specified type variable from its constraints.  Returns {@code null}
@@ -1505,6 +1436,114 @@ public final class TypeResolver {
     }
   }
 
+  // TODO: Figure out which approach is better.
+  private static final boolean INTERSECTION_TYPES_ARE_TYPE_VARIABLES = true;
+  private static final GenericDeclaration INTERSECTION_TYPE_DECLARATION = TypeResolver.class;
+  private static final AtomicInteger INTERSECTION_TYPE_ID = new AtomicInteger();
+
+  /**
+   * Returns a type representing the intersection of all of the specified types.  If there is only
+   * one type in the provided set, then that type is returned.
+   *
+   * @throws IllegalArgumentException if {@code types} is empty
+   */
+  private static Type newIntersectionType(Set<Type> types) {
+    checkNotNull(types);
+    checkArgument(!types.isEmpty());
+    if (types.size() == 1) {
+      return types.iterator().next();
+    }
+    if (INTERSECTION_TYPES_ARE_TYPE_VARIABLES) {
+      String name =
+          "intersection#"
+              + INTERSECTION_TYPE_ID.incrementAndGet()
+              + "-of "
+              + Joiner.on(" & ").join(types);
+      return Types.newArtificialTypeVariable(
+          INTERSECTION_TYPE_DECLARATION,
+          name,
+          types.toArray(new Type[0]));
+    } else {
+      return new Types.WildcardTypeImpl(
+          new Type[0],
+          types.toArray(new Type[0]));
+    }
+  }
+
+  /**
+   * Returns the bounds of the specified intersection type.
+   *
+   * @throws IllegalArgumentException if the specified type is not an intersection type
+   */
+  private static Type[] getIntersectionTypeBounds(Type type) {
+    checkNotNull(type);
+    checkArgument(
+        isIntersectionType(type),
+        "%s is not an intersection type");
+    if (INTERSECTION_TYPES_ARE_TYPE_VARIABLES) {
+      return ((TypeVariable<?>) type).getBounds();
+    } else {
+      return ((WildcardType) type).getUpperBounds();
+    }
+  }
+
+  /** Returns {@code true} if the specified type is an intersection type. */
+  private static boolean isIntersectionType(Type type) {
+    checkNotNull(type);
+    if (INTERSECTION_TYPES_ARE_TYPE_VARIABLES) {
+      return (type instanceof TypeVariable)
+          && ((TypeVariable<?>) type).getGenericDeclaration().equals(
+          INTERSECTION_TYPE_DECLARATION);
+    } else {
+      return (type instanceof WildcardType)
+          && ((WildcardType) type).getLowerBounds().length == 0
+          && ((WildcardType) type).getUpperBounds().length >= 2;
+    }
+  }
+
+  /** Returns {@code true} if the specified type is an array of intersection types. */
+  private static boolean isIntersectionTypeArray(Type type) {
+    checkNotNull(type);
+    return (type instanceof GenericArrayType)
+        && isIntersectionType(((GenericArrayType) type).getGenericComponentType());
+  }
+
+  // TODO: Explain why this method is necessary.
+  //       Basically, without this,
+  //         Foo isSubtypeOf (? super (intersection-of Foo & Bar))
+  //       would be false, but we need it to be true.
+  // ? super (intersection#N-of Foo & Bar)   ---> ? super Foo & Bar
+  // ? super (intersection#N-of Foo & Bar)[] ---> ? super Foo[] & Bar[]
+  private static Type[] flattenIntersectionTypesInBounds(Type[] bounds) {
+    checkNotNull(bounds);
+    Set<Type> flat = null;
+    for (int i = 0; i < bounds.length; i++) {
+      Type type = bounds[i];
+      if (!(isIntersectionType(type)) && !isIntersectionTypeArray(type)) {
+        if (flat != null) {
+          flat.add(type);
+        }
+        continue;
+      }
+      if (flat == null) {
+        flat = new LinkedHashSet<>(Arrays.asList(bounds).subList(0, i));
+      }
+      if (isIntersectionType(type)) {
+        for (Type bound : getIntersectionTypeBounds(type)) {
+          if (!bound.equals(Object.class)) {
+            flat.add(bound);
+          }
+        }
+      } else if (isIntersectionTypeArray(type)) {
+        Type componentType = ((GenericArrayType) type).getGenericComponentType();
+        for (Type bound : getIntersectionTypeBounds(componentType)) {
+          flat.add(Types.newArrayType(bound));
+        }
+      }
+    }
+    return (flat == null) ? bounds : flat.toArray(new Type[0]);
+  }
+
   /**
    * Returns {@code true} if it is possible for any type to be a subtype of both {@code a} and
    * {@code b}.
@@ -1559,23 +1598,94 @@ public final class TypeResolver {
         supertype.getTypeName() + " is not a supertype of " + subtype.getTypeName());
   }
 
+  /**
+   * Returns the generic type declarations of the specified type, including the generic type
+   * declarations of its supertypes and interfaces.
+   */
+  private static Set<Type> getGenericSupertypes(Type type) {
+    checkNotNull(type);
+    Set<Type> genericSupertypes = new LinkedHashSet<>();
+    for (Class<?> rawType : getRawTypes(type)) {
+      Type genericType = getGenericType(rawType);
+      genericSupertypes.add(genericType);
+    }
+    Type componentType = Types.getComponentType(type);
+    if (componentType != null && !isPrimitive(componentType)) {
+      genericSupertypes.add(GenericArrayTypeHolder.GENERIC_ARRAY_TYPE);
+    }
+    return genericSupertypes;
+  }
+
+  private static final class GenericArrayTypeHolder<Q> {
+    private static <E> E[] genericArray() { throw new UnsupportedOperationException(); }
+    static final Type GENERIC_ARRAY_TYPE;
+    static {
+      Method method;
+      try {
+        method = GenericArrayTypeHolder.class.getDeclaredMethod("genericArray");
+      } catch (NoSuchMethodException e) {
+        throw new LinkageError("", e);
+      }
+      GENERIC_ARRAY_TYPE = method.getGenericReturnType();
+    }
+  }
+
+  /** Returns {@code true} if the specified type is a primitive type. */
+  private static boolean isPrimitive(Type type) {
+    checkNotNull(type);
+    return (type instanceof Class) && ((Class<?>) type).isPrimitive();
+  }
+
+  /** Returns the raw type of the specified type. */
+  private static Class<?> getRawType(Type type) {
+    checkNotNull(type);
+    return getRawTypes(type).iterator().next();
+  }
+
+  /**
+   * Returns the raw types of the specified type, including the raw types of its supertypes and
+   * interfaces.
+   */
+  static Set<Class<?>> getRawTypes(Type type) {
+    checkNotNull(type);
+    final ImmutableSet.Builder<Class<?>> builder = ImmutableSet.builder();
+    new TypeVisitor() {
+      @Override
+      void visitTypeVariable(TypeVariable<?> t) {
+        visit(t.getBounds());
+      }
+
+      @Override
+      void visitWildcardType(WildcardType t) {
+        visit(t.getUpperBounds());
+      }
+
+      @Override
+      void visitParameterizedType(ParameterizedType t) {
+        visit(t.getRawType());
+      }
+
+      @Override
+      void visitClass(Class<?> t) {
+        builder.add(t);
+        visit(t.getInterfaces());
+        visit(t.getSuperclass());
+      }
+
+      @Override
+      void visitGenericArrayType(GenericArrayType t) {
+        visit(Types.getArrayClass(getRawType(t.getGenericComponentType())));
+      }
+    }.visit(type);
+    return builder.build();
+  }
+
   /** Returns {@code true} if {@code a} is a subtype of {@code b}. */
   private static boolean isSubtype(Type a, Type b) {
     checkNotNull(a);
     checkNotNull(b);
     // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
     return TypeToken.of(a).isSubtypeOf(b);
-  }
-
-  /** Returns the raw supertypes of the specified type. */
-  private static Set<Class<?>> getRawSupertypes(Type type) {
-    checkNotNull(type);
-    Set<Class<?>> rawSupertypes = new LinkedHashSet<>();
-    // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
-    for (TypeToken<?> supertype : TypeToken.of(type).getTypes()) {
-      rawSupertypes.add(supertype.getRawType());
-    }
-    return rawSupertypes;
   }
 
   /** Returns the generic type declaration of the specified class. */
