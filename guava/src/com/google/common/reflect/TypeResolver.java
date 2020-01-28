@@ -625,15 +625,15 @@ public final class TypeResolver {
     }
 
     /** Deduces the type of this type variable from its constraints. */
-    Type get() {
+    Type get(Set<Type> supertypesToAvoidResolving) {
       if (equalToType != null) {
         return equalToType;
       }
       if (supertypeOfTypes != null) {
-        return reduceSupertypeOfTypes(supertypeOfTypes);
+        return getSupertypeOfTypes(supertypeOfTypes, supertypesToAvoidResolving);
       }
       if (subtypeOfTypes != null) {
-        return reduceSubtypeOfTypes(subtypeOfTypes);
+        return getSubtypeOfTypes(subtypeOfTypes);
       }
       if (relatedToTypes != null) {
         return Object.class;
@@ -921,8 +921,10 @@ public final class TypeResolver {
 
     /**
      * Returns a type that is a subtype of all of the specified types.
+     *
+     * @throws IllegalArgumentException if the set is empty
      */
-    private static Type reduceSubtypeOfTypes(Set<Type> types) {
+    private static Type getSubtypeOfTypes(Set<Type> types) {
       checkNotNull(types);
       checkArgument(!types.isEmpty());
       if (types.size() == 1) {
@@ -947,39 +949,87 @@ public final class TypeResolver {
       return newIntersectionType(canonical);
     }
 
-    /** Returns a type that is a supertype of all of the specified types. */
-    private static Type reduceSupertypeOfTypes(Set<Type> types) {
+    /**
+     * Returns a type that is a supertype of all of the specified types.
+     *
+     * @param supertypesToAvoidResolving when this method is invoked recursively, a set of supertypes
+     *        that must not be resolved in order to avoid infinite recursion
+     * @throws IllegalArgumentException if the set is empty
+     */
+    private static Type getSupertypeOfTypes(Set<Type> types, Set<Type> supertypesToAvoidResolving) {
       checkNotNull(types);
       checkArgument(!types.isEmpty());
       if (types.size() == 1) {
         return types.iterator().next();
       }
       Iterator<Type> iterator = types.iterator();
-      Set<Type> supertypes = new LinkedHashSet<>(getSupertypes(iterator.next()));
+      Set<Class<?>> rawSupertypes = new LinkedHashSet<>(getRawSupertypes(iterator.next()));
       while (iterator.hasNext()) {
-        supertypes.retainAll(getSupertypes(iterator.next()));
+        rawSupertypes.retainAll(getRawSupertypes(iterator.next()));
       }
-      if (supertypes.isEmpty()) {
-        // Shouldn't they all share Object at least?
-        throw new IllegalArgumentException("No common supertype in bounds " + types);
+      if (rawSupertypes.isEmpty()) {
+        // Interfaces don't have Object as a supertype.
+        return Object.class;
       }
       // Remove redundant supertypes.
-      Set<Type> canonical = new LinkedHashSet<>(supertypes);
-      for (Type a : supertypes) {
-        for (Iterator<Type> remover = canonical.iterator(); remover.hasNext();) {
+      Set<Class<?>> canonicalRaw = new LinkedHashSet<>(rawSupertypes);
+      for (Type a : rawSupertypes) {
+        for (Iterator<Class<?>> remover = canonicalRaw.iterator(); remover.hasNext();) {
           Type b = remover.next();
           if (!b.equals(a) && isSubtype(a, b)) {
             remover.remove();
           }
         }
       }
-      if (canonical.isEmpty()) { // impossible
+      if (canonicalRaw.isEmpty()) { // impossible
         throw new AssertionError();
       }
-      if (canonical.size() == 1) {
-        return canonical.iterator().next();
+      Set<Type> canonicalGeneric = new LinkedHashSet<>();
+      for (Class<?> rawType : canonicalRaw) {
+        canonicalGeneric.add(getGenericType(rawType));
       }
-      return newIntersectionType(canonical);
+      Type intersection =
+          (canonicalGeneric.size() == 1)
+              ? canonicalGeneric.iterator().next()
+              : newIntersectionType(canonicalGeneric);
+      ConstraintsBuilder builder = new ConstraintsBuilder();
+      builder.isForSupertypeReduction = true;
+      for (Type type : types) {
+        for (Type generic : canonicalGeneric) {
+          if (generic instanceof Class) {
+            continue;
+          }
+          if (supertypesToAvoidResolving.contains(generic)) {
+            // We've already seen this generic type and we're already trying to
+            // resolve it.  It's probably Comparable<T> and we're probably going
+            // to end up with some type that looks like
+            // "Foo & Comparable<? extends Foo & Comparable<?>>".
+            // This logic here is responsible for inserting that last
+            // "Comparable<?>" with a "?" for its type argument.
+            if (generic instanceof ParameterizedType) {
+              Class<?> rawType = (Class<?>) ((ParameterizedType) generic).getRawType();
+              TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
+              Type[] typeArguments = new Type[typeParameters.length];
+              for (int i = 0; i < typeParameters.length; i++) {
+                typeArguments[i] =
+                    new Types.WildcardTypeImpl(
+                        new Type[0],
+                        typeParameters[i].getBounds());
+              }
+              ParameterizedType withWildcards = Types.newParameterizedType(rawType, typeArguments);
+              builder.visit(generic, ConstraintKind.SUPERTYPE_OF, withWildcards);
+            }
+            continue;
+          }
+          builder.visit(generic, ConstraintKind.SUPERTYPE_OF, type);
+        }
+      }
+      Constraints constraints = builder.constraints;
+      constraints.supertypesToAvoidResolving.addAll(supertypesToAvoidResolving);
+      constraints.supertypesToAvoidResolving.addAll(canonicalGeneric);
+      TypeTable typeTable = new TypeTable(constraints);
+      TypeResolver resolver = new TypeResolver(typeTable);
+      return resolver.resolveType(intersection);
     }
 
     /**
@@ -1001,6 +1051,7 @@ public final class TypeResolver {
   /** Constraints for many {@link TypeVariable}s. */
   private static final class Constraints {
     private final Map<TypeVariableKey, Constraint> keyToConstraint = new LinkedHashMap<>();
+    private final Set<Type> supertypesToAvoidResolving = new LinkedHashSet<>();
 
     /**
      * Deduces the type of the specified type variable from its constraints.  Returns {@code null}
@@ -1009,7 +1060,7 @@ public final class TypeResolver {
     @Nullable Type get(TypeVariableKey key) {
       checkNotNull(key);
       Constraint constraint = keyToConstraint.get(key);
-      return (constraint == null) ? null : constraint.get();
+      return (constraint == null) ? null : constraint.get(supertypesToAvoidResolving);
     }
 
     /**
@@ -1086,7 +1137,7 @@ public final class TypeResolver {
     static Constraints fromTypeArgument(Type formal, Type actual) {
       checkNotNull(formal);
       checkNotNull(actual);
-      ConstraintsBuilder builder = new ConstraintsBuilder(false);
+      ConstraintsBuilder builder = new ConstraintsBuilder();
       builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
       return builder.constraints;
     }
@@ -1101,7 +1152,8 @@ public final class TypeResolver {
     static Constraints fromTypeDeclaration(Type formal, Type actual) {
       checkNotNull(formal);
       checkNotNull(actual);
-      ConstraintsBuilder builder = new ConstraintsBuilder(true);
+      ConstraintsBuilder builder = new ConstraintsBuilder();
+      builder.isForTypeDeclaration = true;
       builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
       return builder.constraints;
     }
@@ -1110,11 +1162,8 @@ public final class TypeResolver {
   private static final class ConstraintsBuilder {
     final Constraints constraints = new Constraints();
     private final Set<Seen> seen = new LinkedHashSet<>();
-    private final boolean isForTypeDeclaration;
-
-    ConstraintsBuilder(boolean isForTypeDeclaration) {
-      this.isForTypeDeclaration = isForTypeDeclaration;
-    }
+    boolean isForTypeDeclaration;
+    boolean isForSupertypeReduction;
 
     void visit(Type formal, ConstraintKind kind, Type actual) {
       //System.out.println("set " + formal + " " + kind + " " + actual);
@@ -1298,7 +1347,10 @@ public final class TypeResolver {
               i,
               actualArgument.getTypeName());
         }
-        visit(formalArgument, ConstraintKind.EQUAL_TO, actualArgument);
+        visit(
+            formalArgument,
+            isForSupertypeReduction ? ConstraintKind.SUPERTYPE_OF : ConstraintKind.EQUAL_TO,
+            actualArgument);
       }
     }
 
@@ -1515,36 +1567,21 @@ public final class TypeResolver {
     return TypeToken.of(a).isSubtypeOf(b);
   }
 
-  /** Returns the supertypes of the specified type, including raw types. */
-  private static Set<Type> getSupertypes(Type type) {
+  /** Returns the raw supertypes of the specified type. */
+  private static Set<Class<?>> getRawSupertypes(Type type) {
     checkNotNull(type);
-    Set<Type> supertypes = new LinkedHashSet<>();
+    Set<Class<?>> rawSupertypes = new LinkedHashSet<>();
     // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
     for (TypeToken<?> supertype : TypeToken.of(type).getTypes()) {
-      supertypes.add(supertype.getType());
-      //
-      // We also need to inspect the raw types.  Suppose that our bounds
-      // contain String and Integer.  String is Comparable<String>, and
-      // Integer is Comparable<Integer>.  They don't share either one of those
-      // parameterized types, but they do share Comparable<?>.
-      //
-      Class<?> rawType = supertype.getRawType();
-      TypeVariable<?>[] typeParameters = rawType.getTypeParameters();
-      if (typeParameters.length == 0) {
-        supertypes.add(rawType);
-      } else {
-        Type[] typeArguments = new Type[typeParameters.length];
-        for (int i = 0; i < typeParameters.length; i++) {
-          typeArguments[i] =
-              new Types.WildcardTypeImpl(
-                  new Type[0],
-                  typeParameters[i].getBounds());
-        }
-        ParameterizedType parameterizedType =
-            Types.newParameterizedType(rawType, typeArguments);
-        supertypes.add(parameterizedType);
-      }
+      rawSupertypes.add(supertype.getRawType());
     }
-    return supertypes;
+    return rawSupertypes;
+  }
+
+  /** Returns the generic type declaration of the specified class. */
+  private static Type getGenericType(Class<?> clazz) {
+    checkNotNull(clazz);
+    // TODO: Avoid depending on TypeToken because TypeToken depends on TypeResolver.
+    return TypeToken.toGenericType(clazz).getType();
   }
 }

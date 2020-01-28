@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
@@ -1933,4 +1934,231 @@ public final class StrictTypeResolverTest {
   }
 
   public static <T extends Comparable<? super T>> T parameterizedTypeToWildcard(List<Collection<T>> a) { return null; }
+
+  @Test
+  public void multipleExactTypes() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                AccessibleObject.class)
+            .where(
+                method.getGenericParameterTypes()[1],
+                Member.class)
+            .where(
+                method.getGenericParameterTypes()[2],
+                Field.class);
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        Object.class,
+        param0Type);
+
+    assertEquals(
+        Object.class,
+        param1Type);
+
+    assertEquals(
+        Object.class,
+        param2Type);
+
+    assertEquals(
+        Object.class,
+        returnType);
+
+    multipleExactTypes(
+        (AccessibleObject) null,
+        (Member) null,
+        (Field) null);
+  }
+
+  public static <T> T multipleExactTypes(T a, T b, T c) { return null; }
+
+  @Test
+  public void multipleExactTypes2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                Double.class)
+            .where(
+                method.getGenericParameterTypes()[1],
+                Serializable.class)
+            .where(
+                method.getGenericParameterTypes()[2],
+                Integer.class);
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        Serializable.class,
+        param0Type);
+
+    assertEquals(
+        Serializable.class,
+        param1Type);
+
+    assertEquals(
+        Serializable.class,
+        param2Type);
+
+    assertEquals(
+        Serializable.class,
+        returnType);
+
+    multipleExactTypes(
+        (Double) null,
+        (Serializable) null,
+        (Integer) null);
+  }
+
+  @Test
+  public void multipleExactTypes3() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                Double.class)
+            .where(
+                method.getGenericParameterTypes()[1],
+                Long.class)
+            .where(
+                method.getGenericParameterTypes()[2],
+                Integer.class);
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // Number & Comparable<? extends Number & Comparable<?>>
+    for (Type type : ImmutableList.of(param0Type, param1Type, param2Type, returnType)) {
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(Number.class));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Comparable<?>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Comparable<? extends Number>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Comparable<? extends Comparable<?>>>() {}.capture()));
+    }
+
+    multipleExactTypes(
+        (Double) null,
+        (Long) null,
+        (Integer) null);
+  }
+
+  @Test
+  public void multipleExactTypes4() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<String>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<List<Integer>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[2],
+                new TypeCapture<List<Double>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? extends Serializable & Comparable<? extends Serializable & Comparable<?>>
+    for (Type type : ImmutableList.of(param0Type, param1Type, param2Type, returnType)) {
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<List<? extends Serializable>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<List<? extends Comparable<?>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Serializable>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+    }
+
+    multipleExactTypes(
+        (List<String>) null,
+        (List<Integer>) null,
+        (List<Double>) null);
+  }
+
+  @Test
+  public void multipleExactTypes5() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<IFooBarString>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<IFooBarInteger>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[2],
+                new TypeCapture<IFooBarDouble>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    //    IFoo<? extends Serializable & Comparable<? extends Serializable & Comparable<?>>
+    //  & IBar<? extends Serializable & Comparable<? extends Serializable & Comparable<?>>
+    for (Type type : ImmutableList.of(param0Type, param1Type, param2Type, returnType)) {
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IFoo<?>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IFoo<? extends Serializable>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IFoo<? extends Comparable<?>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IFoo<? extends Comparable<? extends Serializable>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IFoo<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IBar<?>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IBar<? extends Serializable>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IBar<? extends Comparable<?>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IBar<? extends Comparable<? extends Serializable>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<IBar<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+    }
+
+    multipleExactTypes(
+        (IFooBarString) null,
+        (IFooBarInteger) null,
+        (IFooBarDouble) null);
+  }
+
+  interface IFoo<T> {}
+  interface IBar<T> {}
+  interface IFooBarString extends IFoo<String>, IBar<String> {}
+  interface IFooBarInteger extends IFoo<Integer>, IBar<Integer> {}
+  interface IFooBarDouble extends IFoo<Double>, IBar<Double> {}
+
+  @Test
+  public void tokenResolve() throws Exception {
+    class MinFinder<T extends Comparable<? super T>> {
+      public T min(Collection<? extends T> collection) { return null; };
+    }
+
+    Method method = MinFinder.class.getMethod("min", Collection.class);
+
+    Type param0Type = new TypeToken<MinFinder<String>>() {}.resolveType(method.getGenericParameterTypes()[0]).getType();
+    Type returnType = new TypeToken<MinFinder<String>>() {}.resolveType(method.getGenericReturnType()).getType();
+
+    assertEquals(
+        new TypeCapture<Collection<? extends String>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        String.class,
+        returnType);
+  }
 }
