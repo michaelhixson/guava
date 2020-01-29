@@ -83,20 +83,20 @@ final class Types {
       //
       WildcardType wildcard = (WildcardType) componentType;
       Type[] lowerBounds = wildcard.getLowerBounds();
-      if (lowerBounds.length > 0) {
-        Type[] arrayTypes = new Type[lowerBounds.length];
-        for (int i = 0; i < lowerBounds.length; i++) {
-          arrayTypes[i] = newArrayType(lowerBounds[i]);
-        }
-        return new WildcardTypeImpl(arrayTypes, new Type[] { Object.class });
-      } else {
-        Type[] upperBounds = wildcard.getUpperBounds();
-        Type[] arrayTypes = new Type[upperBounds.length];
-        for (int i = 0; i < upperBounds.length; i++) {
-          arrayTypes[i] = newArrayType(upperBounds[i]);
-        }
-        return new WildcardTypeImpl(new Type[0], arrayTypes);
+      Type[] upperBounds = wildcard.getUpperBounds();
+      Type[] lowerArrays = new Type[lowerBounds.length];
+      Type[] upperArrays = new Type[upperBounds.length];
+      for (int i = 0; i < lowerBounds.length; i++) {
+        lowerArrays[i] = newArrayType(lowerBounds[i]);
       }
+      if (lowerBounds.length > 0 && upperBounds.length == 1 && upperBounds[0].equals(Object.class)) {
+        upperArrays[0] = Object.class;
+      } else {
+        for (int i = 0; i < upperBounds.length; i++) {
+          upperArrays[i] = newArrayType(upperBounds[i]);
+        }
+      }
+      return new WildcardTypeImpl(lowerArrays, upperArrays);
     }
     return JavaVersion.CURRENT.newArrayType(componentType);
   }
