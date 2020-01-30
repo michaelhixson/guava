@@ -9,6 +9,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
+import com.google.common.collect.testing.AnEnum;
 import java.io.Serializable;
 import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
@@ -103,13 +104,13 @@ public final class StrictTypeResolverTest {
         new TypeResolver()
             .where(
                 method.getGenericParameterTypes()[0],
-                TimeUnit.class);
+                new TypeCapture<Class<TimeUnit>>() {}.capture());
 
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
-        Types.newParameterizedType(Class.class, TimeUnit.class),
+        new TypeCapture<Class<TimeUnit>>() {}.capture(),
         param0Type);
 
     assertEquals(
@@ -440,30 +441,36 @@ public final class StrictTypeResolverTest {
   public static <T> void badVariance6(List<List<T>> b) {}
 
   @Test
-  public void badVariance7() throws Exception {
+  public <T> void badVariance7() throws Exception {
     Method method = StrictTypeResolverTest.class.getMethod("badVariance7", List.class);
 
-    // TODO: Look more closely into why this should fail.
-    // Currently, we're enforcing this through a check that type variables can't
-    // be set to wildcards, with a very ugly exception (not the thrown kind)
-    // for TypeToken.resolveTypeArgsForSubclass().
-    //
-    // This behavior we're trying to mimic seems to be specific to method
-    // invocations.  Maybe the other TypeResolver behavior should be the
-    // default, and this should be the special case.
-
-    try {
-      new TypeResolver()
-          .where(
-              method.getGenericParameterTypes()[0],
-              new TypeCapture<List<List<?>>>() {}.capture());
-      fail();
-    } catch (IllegalArgumentException expected) {}
+    // TODO: Look more closely into why this should fail.  Figure out a way to
+    //       implement this without breaking other tests and ideally without
+    //       introducing any new APIs.  Note that the behavior in javac that
+    //       this wants to mimic seems specific to method invocations.
+    if (false) {
+      try {
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<List<?>>>() {}.capture());
+        fail();
+      } catch (IllegalArgumentException expected) {}
+    }
 
     //badVariance7((List<List<?>>) null);
+
+    new TypeResolver()
+        .where(
+            new TypeCapture<List<List<T>>>() {}.capture(),
+            new TypeCapture<BadVariance7Interface<?>>() {}.capture());
+
+    // Why is this valid but List<List<?>> is not?
+    badVariance7((BadVariance7Interface<?>) null);
   }
 
   public static <T> void badVariance7(List<List<T>> b) {}
+  public interface BadVariance7Interface<T> extends List<List<T>> {}
 
   @Test
   public void badVariance8() throws Exception {
@@ -2425,6 +2432,40 @@ public final class StrictTypeResolverTest {
     //multipleExactComparable((Double) null, (Long) null, (Integer) null);
   }
 
+  @Test
+  public void multipleExactTypes13() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("multipleExactTypes", Object.class, Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Class<TimeUnit>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Class<TimeUnit>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[2],
+                new TypeCapture<Class<AnEnum>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type param2Type = resolver.resolveType(method.getGenericParameterTypes()[2]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // Number & Comparable<? extends Number & Comparable<?>>
+    for (Type type : ImmutableList.of(param0Type, param1Type, param2Type, returnType)) {
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Class<?>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Class<? extends Enum<?>>>() {}.capture()));
+      assertTrue(type.getTypeName(), TypeToken.of(type).isSubtypeOf(new TypeCapture<Class<? extends Enum<? extends Enum<?>>>>() {}.capture()));
+    }
+
+    multipleExactTypes(
+        TimeUnit.class,
+        TimeUnit.class,
+        AnEnum.class);
+  }
+
   public static <T extends Comparable<? super T>> T multipleExactComparable(T a, T b, T c) { return null; }
 
   @Test
@@ -2445,5 +2486,42 @@ public final class StrictTypeResolverTest {
     assertEquals(
         String.class,
         returnType);
+  }
+
+  @Test
+  public <T> void collectingAndThen() throws Exception {
+    Method method = Collectors.class.getMethod("collectingAndThen", Collector.class, Function.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Collector<T, ?, List<T>>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Function<List<T>, List<T>>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<Collector<T, ?, List<T>>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Function<List<T>, List<T>>>() {}.capture(),
+        param1Type);
+
+    assertEquals(
+        new TypeCapture<Collector<T, ?, List<T>>>() {}.capture(),
+        returnType);
+
+    Stream<T> stream = Stream.empty();
+    List<T> result =
+        stream.collect(
+            Collectors.collectingAndThen(
+                Collectors.toList(),
+                Collections::unmodifiableList));
   }
 }

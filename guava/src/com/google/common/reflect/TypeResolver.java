@@ -39,7 +39,6 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 /**
@@ -116,13 +115,6 @@ public final class TypeResolver {
    *     corresponding mappings exist in the current {@code TypeResolver} instance.
    */
   public TypeResolver where(Type formal, Type actual) {
-    checkNotNull(formal);
-    checkNotNull(actual);
-    return where(Constraints.fromTypeArgument(formal, actual));
-  }
-
-  // TODO: Figure out if this method is really necessary.
-  TypeResolver withTypeDeclaration(Type formal, Type actual) {
     checkNotNull(formal);
     checkNotNull(actual);
     return where(Constraints.fromTypeDeclaration(formal, actual));
@@ -1057,23 +1049,8 @@ public final class TypeResolver {
     }
 
     /**
-     * Returns the constraints that result from supplying an argument of type {@code actual} in a
-     * position that expects {@code formal}.  For example, {@code actual} may be a method argument
-     * type while {@code formal} is the declared method parameter type.
-     *
-     * @throws IllegalArgumentException if the type argument is invalid
-     */
-    static Constraints fromTypeArgument(Type formal, Type actual) {
-      checkNotNull(formal);
-      checkNotNull(actual);
-      ConstraintsBuilder builder = new ConstraintsBuilder();
-      builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
-      return builder.constraints;
-    }
-
-    /**
      * Returns the constraints that result from declaring {@code actual} as a subtype of {@code
-     * formal}.  For example, {@code actual} may be the actual type of a variable containing an
+     * formal}.  For example, {@code actual} may be the actual type of a variable referring to an
      * instance of a class while {@code formal} is the declared generic type of that class.
      *
      * @throws IllegalArgumentException if the type declaration is invalid
@@ -1082,7 +1059,6 @@ public final class TypeResolver {
       checkNotNull(formal);
       checkNotNull(actual);
       ConstraintsBuilder builder = new ConstraintsBuilder();
-      builder.isForTypeDeclaration = true;
       builder.visit(formal, ConstraintKind.SUPERTYPE_OF, actual);
       return builder.constraints;
     }
@@ -1091,7 +1067,6 @@ public final class TypeResolver {
   private static final class ConstraintsBuilder {
     final Constraints constraints = new Constraints();
     private final Set<Seen> seen = new LinkedHashSet<>();
-    boolean isForTypeDeclaration;
     boolean isForLeastUpperBound;
 
     void visit(Type formal, ConstraintKind kind, Type actual) {
@@ -1188,37 +1163,21 @@ public final class TypeResolver {
         }
         return; // Okay to say Foo<A> is <?>
       }
-      if (actual instanceof Class && formal.getRawType().equals(Class.class)) {
-        // formal=Class<K extends Enum<K>>, actual=TimeUnit
-        visit(formal.getActualTypeArguments()[0], ConstraintKind.EQUAL_TO, actual);
-        return;
-      }
-      ParameterizedType actualParameterizedType;
-      if (actual instanceof Class) {
-        // formal=Comparable<? super T>, actual=Integer
-        actualParameterizedType = getParameterizedSupertype((Class<?>) actual, formal);
-      } else {
+      if (kind.equals(ConstraintKind.EQUAL_TO)) {
         checkArgument(
             actual instanceof ParameterizedType,
             "%s is not a parameterized type",
             actual.getTypeName());
-        actualParameterizedType = (ParameterizedType) actual;
-      }
-      Class<?> formalRawType = (Class<?>) formal.getRawType();
-      Class<?> actualRawType = (Class<?>) actualParameterizedType.getRawType();
-      if (kind.equals(ConstraintKind.EQUAL_TO)) {
+        ParameterizedType actualParameterizedType = (ParameterizedType) actual;
+        Class<?> formalRawType = (Class<?>) formal.getRawType();
+        Class<?> actualRawType = (Class<?>) actualParameterizedType.getRawType();
         checkArgument(
             formalRawType.equals(actualRawType),
             "Inconsistent raw type: %s vs. %s",
             formal.getTypeName(),
             actualParameterizedType.getTypeName());
-      } else {
-        checkArgument(
-            formalRawType.isAssignableFrom(actualRawType),
-            "Inconsistent raw type: %s vs. %s",
-            formal.getTypeName(),
-            actualParameterizedType.getTypeName());
       }
+      ParameterizedType actualParameterizedType = getParameterizedSupertype(actual, formal);
       Type[] formalArguments = formal.getActualTypeArguments();
       Type[] actualArguments = actualParameterizedType.getActualTypeArguments();
       checkArgument(
@@ -1234,19 +1193,6 @@ public final class TypeResolver {
       for (int i = 0; i < formalArguments.length; i++) {
         Type formalArgument = formalArguments[i];
         Type actualArgument = actualArguments[i];
-        if (formalArgument instanceof TypeVariable) {
-          checkArgument(
-              !(actualArgument instanceof WildcardType)
-                  || !kind.equals(ConstraintKind.EQUAL_TO)
-                  || isForTypeDeclaration,
-              "%s not compatible with %s because parameter %s at index %s "
-                  + "is not compatible with argument %s",
-              formal.getTypeName(),
-              actual.getTypeName(),
-              formalArgument.getTypeName(),
-              i,
-              actualArgument.getTypeName());
-        }
         if (formalArgument instanceof WildcardType) {
           checkArgument(
               actualArgument instanceof WildcardType
@@ -1460,40 +1406,23 @@ public final class TypeResolver {
   }
 
   /**
-   * Returns the parameterized supertype of {@code subtype} having the same raw class as {@code
+   * Returns the parameterized supertype of {@code subtype} having the same raw type as {@code
    * supertype}.
    *
    * @throws IllegalArgumentException if no such supertype exists
    */
   private static ParameterizedType getParameterizedSupertype(
-      Class<?> subtype, ParameterizedType supertype) {
+      Type subtype, ParameterizedType supertype) {
     checkNotNull(subtype);
     checkNotNull(supertype);
-    Class<?> rawTypeToMatch = (Class<?>) supertype.getRawType();
-    AtomicReference<ParameterizedType> resultHolder = new AtomicReference<>();
-    new TypeVisitor() {
-      @Override
-      void visitClass(Class<?> t) {
-        visit(t.getGenericSuperclass());
-        visit(t.getGenericInterfaces());
+    for (Class<?> rawType : getRawTypes(subtype)) {
+      if (rawType.equals(supertype.getRawType())) {
+        Type genericType = getGenericType(rawType);
+        return (ParameterizedType) covariantly(subtype).resolveType(genericType);
       }
-
-      @Override
-      void visitParameterizedType(ParameterizedType t) {
-        Class<?> rawType = (Class<?>) t.getRawType();
-        if (rawType.equals(rawTypeToMatch)) {
-          resultHolder.set(t);
-          return;
-        }
-        visit(rawType);
-      }
-    }.visit(subtype);
-    ParameterizedType result = resultHolder.get();
-    checkArgument(
-        result != null,
-        "% is not a supertype of %s",
-        supertype, subtype);
-    return result;
+    }
+    throw new IllegalArgumentException(
+        supertype.getTypeName() + " is not a supertype of " + subtype.getTypeName());
   }
 
   /**
