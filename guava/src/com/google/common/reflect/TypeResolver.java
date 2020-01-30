@@ -174,6 +174,7 @@ public final class TypeResolver {
     Type owner = type.getOwnerType();
     Type resolvedOwner = (owner == null) ? null : resolveType(owner);
     Type resolvedRawType = resolveType(type.getRawType());
+
     Type[] args = type.getActualTypeArguments();
     Type[] resolvedArgs = resolveTypes(args);
     return Types.newParameterizedTypeWithOwner(
