@@ -77,9 +77,7 @@ public final class TypeResolver {
    * {@code <?>}.
    */
   static TypeResolver covariantly(Type contextType) {
-    Constraints constraints = TypeMappingIntrospector.getConstraints(contextType);
-    TypeTable typeTable = new TypeTable(constraints);
-    return new TypeResolver(typeTable);
+    return new TypeResolver().where(TypeMappingIntrospector.getConstraints(contextType));
   }
 
   /**
@@ -95,9 +93,7 @@ public final class TypeResolver {
    */
   static TypeResolver invariantly(Type contextType) {
     Type invariantContext = WildcardCapturer.INSTANCE.capture(contextType);
-    Constraints constraints = TypeMappingIntrospector.getConstraints(invariantContext);
-    TypeTable typeTable = new TypeTable(constraints);
-    return new TypeResolver(typeTable);
+    return new TypeResolver().where(TypeMappingIntrospector.getConstraints(invariantContext));
   }
 
   /**
@@ -122,18 +118,19 @@ public final class TypeResolver {
   public TypeResolver where(Type formal, Type actual) {
     checkNotNull(formal);
     checkNotNull(actual);
-    Constraints moreConstraints = Constraints.fromTypeArgument(formal, actual);
-    TypeTable newTypeTable = typeTable.where(moreConstraints);
-    return new TypeResolver(newTypeTable);
+    return where(Constraints.fromTypeArgument(formal, actual));
   }
 
   // TODO: Figure out if this method is really necessary.
   TypeResolver withTypeDeclaration(Type formal, Type actual) {
     checkNotNull(formal);
     checkNotNull(actual);
-    Constraints moreConstraints = Constraints.fromTypeDeclaration(formal, actual);
-    TypeTable newTypeTable = typeTable.where(moreConstraints);
-    return new TypeResolver(newTypeTable);
+    return where(Constraints.fromTypeDeclaration(formal, actual));
+  }
+
+  private TypeResolver where(Constraints constraints) {
+    checkNotNull(constraints);
+    return new TypeResolver(typeTable.where(constraints));
   }
 
   /**
@@ -171,6 +168,12 @@ public final class TypeResolver {
     return result;
   }
 
+  private WildcardType resolveWildcardType(WildcardType type) {
+    Type[] lowerBounds = type.getLowerBounds();
+    Type[] upperBounds = type.getUpperBounds();
+    return new Types.WildcardTypeImpl(resolveTypes(lowerBounds), resolveTypes(upperBounds));
+  }
+
   private Type resolveGenericArrayType(GenericArrayType type) {
     Type componentType = type.getGenericComponentType();
     Type resolvedComponentType = resolveType(componentType);
@@ -187,14 +190,6 @@ public final class TypeResolver {
         resolvedOwner, (Class<?>) resolvedRawType, resolvedArgs);
   }
 
-  private WildcardType resolveWildcardType(WildcardType type) {
-    Type[] lowerBounds = type.getLowerBounds();
-    Type[] upperBounds = type.getUpperBounds();
-    return new Types.WildcardTypeImpl(
-        resolveTypes(lowerBounds),
-        resolveTypes(upperBounds));
-  }
-
   /** A TypeTable maintains mapping from {@link TypeVariable} to types. */
   private static class TypeTable {
     private final Constraints constraints;
@@ -209,8 +204,7 @@ public final class TypeResolver {
 
     /** Returns a new {@code TypeTable} with additional constraints. */
     final TypeTable where(Constraints moreConstraints) {
-      Constraints combinedConstraints = Constraints.combine(constraints, moreConstraints);
-      return new TypeTable(combinedConstraints);
+      return new TypeTable(Constraints.combine(constraints, moreConstraints));
     }
 
     final Type resolve(final TypeVariable<?> var) {
@@ -973,8 +967,7 @@ public final class TypeResolver {
       Constraints constraints = builder.constraints;
       constraints.recursiveTypes.addAll(recursiveTypes);
       constraints.recursiveTypes.addAll(canonicalGenericTypes);
-      TypeTable typeTable = new TypeTable(constraints);
-      TypeResolver resolver = new TypeResolver(typeTable);
+      TypeResolver resolver = new TypeResolver().where(constraints);
       return resolver.resolveType(genericIntersectionType);
     }
   }
@@ -1045,6 +1038,7 @@ public final class TypeResolver {
         }
         thisConstraint.setAll(thatConstraint);
       }
+      this.recursiveTypes.addAll(that.recursiveTypes);
     }
 
     /**
@@ -1080,7 +1074,7 @@ public final class TypeResolver {
     /**
      * Returns the constraints that result from declaring {@code actual} as a subtype of {@code
      * formal}.  For example, {@code actual} may be the actual type of a variable containing an
-     * instance of a class while {@code formal} is the declared type of that class.
+     * instance of a class while {@code formal} is the declared generic type of that class.
      *
      * @throws IllegalArgumentException if the type declaration is invalid
      */

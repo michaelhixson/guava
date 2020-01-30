@@ -447,6 +447,10 @@ public final class StrictTypeResolverTest {
     // Currently, we're enforcing this through a check that type variables can't
     // be set to wildcards, with a very ugly exception (not the thrown kind)
     // for TypeToken.resolveTypeArgsForSubclass().
+    //
+    // This behavior we're trying to mimic seems to be specific to method
+    // invocations.  Maybe the other TypeResolver behavior should be the
+    // default, and this should be the special case.
 
     try {
       new TypeResolver()
