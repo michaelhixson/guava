@@ -1027,13 +1027,13 @@ public final class TypeResolver {
       checkNotNull(that);
       for (Map.Entry<TypeVariableKey, TypeVariableConstraints> entry : that.map.entrySet()) {
         TypeVariableKey key = entry.getKey();
-        TypeVariableConstraints thatConstraint = entry.getValue();
-        TypeVariableConstraints thisConstraint = this.map.get(key);
-        if (thisConstraint == null) {
-          thisConstraint = new TypeVariableConstraints(key);
-          this.map.put(key, thisConstraint);
+        TypeVariableConstraints thoseConstraints = entry.getValue();
+        TypeVariableConstraints theseConstraints = this.map.get(key);
+        if (theseConstraints == null) {
+          theseConstraints = new TypeVariableConstraints(key);
+          this.map.put(key, theseConstraints);
         }
-        thisConstraint.addAll(thatConstraint);
+        theseConstraints.addAll(thoseConstraints);
       }
       this.lubTypes.addAll(that.lubTypes);
     }
@@ -1104,8 +1104,7 @@ public final class TypeResolver {
       mappings.put(key, actual, relationship);
       for (Type formalBound : formal.getBounds()) {
         if (formalBound instanceof Class) {
-          // The Object.class bound is redundant, and it causes problems
-          // when binding T[] to int[].
+          // The Object.class bound is redundant, and it causes problems when binding T[] to int[].
           if (!formalBound.equals(Object.class)) {
             mappings.put(key, formalBound, TypeRelationship.SUPERTYPE);
           }
