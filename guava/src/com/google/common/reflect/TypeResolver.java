@@ -123,309 +123,414 @@ public final class TypeResolver {
     return new TypeResolver(typeTable.where(mappings));
   }
 
-  private static final class TypeMappingsBuilder {
-    final TypeMappings mappings = new TypeMappings();
-    private final Set<Seen> seen = new LinkedHashSet<>();
-    boolean isForLeastUpperBound;
+  /**
+   * Mappings from {@link TypeVariable}s to {@linkplain TypeVariableConstraints constraints} for
+   * those type variables.
+   */
+  private static final class TypeMappings {
+    private final Map<TypeVariableKey, TypeVariableConstraints> map = new LinkedHashMap<>();
 
-    // TODO: Consider converting this back to a static method to reduce changes from master.
-    void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
-      //System.out.println(actual.getTypeName() + " is " + relationship + " to " + formal.getTypeName());
-      checkNotNull(from);
-      checkNotNull(to);
+    /**
+     * Used to prevent infinite recursion in least upper bound (lub) computation.
+     */
+    private final Set<Type> lubTypes = new LinkedHashSet<>();
+
+    @Override
+    public String toString() {
+      return map.values().toString();
+    }
+
+    /**
+     * Resolves the type of the specified type variable.  Returns {@code null} if nothing is known
+     * about the type variable.
+     */
+    @Nullable Type resolve(TypeVariableKey key) {
+      checkNotNull(key);
+      TypeVariableConstraints constraints = map.get(key);
+      return (constraints == null) ? null : constraints.resolve(this);
+    }
+
+    /**
+     * Adds the specified mapping to this instance.
+     *
+     * @param key the type variable
+     * @param value the type to associated with the type variable
+     * @param relationship the relationship between the type variable and the specified type
+     */
+    void put(TypeVariableKey key, Type value, TypeRelationship relationship) {
+      checkNotNull(key);
+      checkNotNull(value);
       checkNotNull(relationship);
-      if (from.equals(to)) {
-        return;
+      TypeVariableConstraints constraints = map.get(key);
+      if (constraints == null) {
+        constraints = new TypeVariableConstraints(key);
+        map.put(key, constraints);
       }
-      if (!seen.add(new Seen(from, to, relationship))) {
-        return;
-      }
-      if (from instanceof TypeVariable) {
-        visitTypeVariable((TypeVariable<?>) from, to, relationship);
-      } else if (from instanceof WildcardType) {
-        visitWildcardType((WildcardType) from, to, relationship);
-      } else if (from instanceof ParameterizedType) {
-        visitParameterizedType((ParameterizedType) from, to, relationship);
-      } else if (from instanceof GenericArrayType) {
-        visitGenericArrayType((GenericArrayType) from, to, relationship);
-      } else if (from instanceof Class) {
-        visitClass((Class<?>) from, to, relationship);
-      } else {
-        throw new AssertionError("Unknown type: " + from);
-      }
-    }
-
-    private void visitTypeVariable(
-        TypeVariable<?> typeVariable, Type to, TypeRelationship relationship) {
-      TypeVariableKey key = new TypeVariableKey(typeVariable);
-      mappings.put(key, to, relationship);
-      for (Type bound : typeVariable.getBounds()) {
-        if (bound instanceof Class) {
-          // The Object.class bound is redundant, and it causes problems when binding T[] to int[].
-          if (!bound.equals(Object.class)) {
-            mappings.put(key, bound, TypeRelationship.SUPERTYPE);
-          }
-        } else {
-          TypeRelationship boundRelationship = relationshipForBound(relationship);
-          if (bound instanceof TypeVariable
-              || !boundRelationship.equals(TypeRelationship.RELATED)) {
-            populateTypeMappings(bound, to, boundRelationship);
-          }
-        }
-      }
-    }
-
-    private void visitWildcardType(
-        WildcardType fromWildcardType, Type to, TypeRelationship relationship) {
-      if (!(to instanceof WildcardType)) {
-        for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
-          if (!(fromLowerBound instanceof Class)) {
-            populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
-          }
-        }
-        for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
-          if (!(fromUpperBound instanceof Class)) {
-            populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
-          }
-        }
-        return;
-      }
-      WildcardType toWildcardType = (WildcardType) to;
-      Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
-      Type[] toUpperBounds = toWildcardType.getUpperBounds();
-      Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
-      Type[] toLowerBounds = toWildcardType.getLowerBounds();
-      checkArgument(
-          fromUpperBounds.length == toUpperBounds.length
-              && fromLowerBounds.length == toLowerBounds.length,
-          "Incompatible type: %s vs. %s",
-          fromWildcardType,
-          to);
-      for (int i = 0; i < fromLowerBounds.length; i++) {
-        populateTypeMappings(fromLowerBounds[i], toLowerBounds[i], TypeRelationship.SUPERTYPE);
-      }
-      for (int i = 0; i < fromUpperBounds.length; i++) {
-        populateTypeMappings(fromUpperBounds[i], toUpperBounds[i], TypeRelationship.SUBTYPE);
-      }
-    }
-
-    private void visitParameterizedType(
-        ParameterizedType fromParameterizedType, Type to, TypeRelationship relationship) {
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        for (Type toLowerBound : toWildcardType.getLowerBounds()) {
-          populateTypeMappings(fromParameterizedType, toLowerBound, TypeRelationship.SUBTYPE);
-        }
-        for (Type toUpperBound : toWildcardType.getUpperBounds()) {
-          if (!toUpperBound.equals(Object.class)) {
-            populateTypeMappings(fromParameterizedType, toUpperBound, TypeRelationship.SUPERTYPE);
-          }
-        }
-        return; // Okay to say Foo<A> is <?>
-      }
-      if (relationship.equals(TypeRelationship.EQUAL)) {
-        checkArgument(
-            to instanceof ParameterizedType,
-            "%s is not a parameterized type",
-            to.getTypeName());
-        ParameterizedType toParameterizedType = (ParameterizedType) to;
-        Class<?> formalRawType = (Class<?>) fromParameterizedType.getRawType();
-        Class<?> actualRawType = (Class<?>) toParameterizedType.getRawType();
-        checkArgument(
-            formalRawType.equals(actualRawType),
-            "Inconsistent raw type: %s vs. %s",
-            fromParameterizedType.getTypeName(),
-            toParameterizedType.getTypeName());
-      }
-      ParameterizedType toParameterizedType = getParameterizedSupertype(to, fromParameterizedType);
-      Type[] fromArgs = fromParameterizedType.getActualTypeArguments();
-      Type[] toArgs = toParameterizedType.getActualTypeArguments();
-      checkArgument(
-          fromArgs.length == toArgs.length,
-          "%s not compatible with %s",
-          fromParameterizedType,
-          toParameterizedType);
-      Type fromOwnerType = fromParameterizedType.getOwnerType();
-      Type toOwnerType = toParameterizedType.getOwnerType();
-      if (fromOwnerType != null && toOwnerType != null) {
-        // TODO: Add tests that exercise this behavior.
-        populateTypeMappings(fromOwnerType, toOwnerType, relationship);
-      }
-      for (int i = 0; i < fromArgs.length; i++) {
-        Type fromArg = fromArgs[i];
-        Type toArg = toArgs[i];
-        if (fromArg instanceof WildcardType) {
-          checkArgument(
-              toArg instanceof WildcardType
-                  || !relationship.equals(TypeRelationship.EQUAL),
-              "%s not compatible with %s because parameter %s at index %s "
-                  + "is not compatible with argument %s",
-              fromParameterizedType.getTypeName(),
-              to.getTypeName(),
-              fromArg.getTypeName(),
-              i,
-              toArg.getTypeName());
-        }
-        if (toArg instanceof WildcardType) {
-          checkArgument(
-              fromArg instanceof Class
-                  || fromArg instanceof WildcardType
-                  || fromArg instanceof TypeVariable,
-              "%s not compatible with %s because parameter %s at index %s "
-                  + "is not compatible with argument capture of %s",
-              fromParameterizedType.getTypeName(),
-              to.getTypeName(),
-              fromArg.getTypeName(),
-              i,
-              toArg.getTypeName());
-        }
-        TypeRelationship argRelationship =
-            isForLeastUpperBound ? TypeRelationship.SUBTYPE : TypeRelationship.EQUAL;
-        populateTypeMappings(fromArg, toArg, argRelationship);
-      }
-    }
-
-    private void visitGenericArrayType(GenericArrayType fromArrayType, Type to, TypeRelationship relationship) {
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        for (Type toLowerBound : toWildcardType.getLowerBounds()) {
-          populateTypeMappings(fromArrayType, toLowerBound, TypeRelationship.SUBTYPE);
-        }
-        for (Type toUpperBound : toWildcardType.getUpperBounds()) {
-          if (!toUpperBound.equals(Object.class)) {
-            populateTypeMappings(fromArrayType, toUpperBound, TypeRelationship.SUPERTYPE);
-          }
-        }
-        return; // Okay to say A[] is <?>
-      }
-      Type componentType = Types.getComponentType(to);
-      checkArgument(componentType != null, "%s is not an array type.", to);
-      populateTypeMappings(fromArrayType.getGenericComponentType(), componentType, relationship);
-    }
-
-    private void visitClass(Class<?> fromClass, Type to, TypeRelationship relationship) {
-      if (to instanceof WildcardType) {
-        WildcardType toWildcardType = (WildcardType) to;
-        for (Type toLowerBound : toWildcardType.getLowerBounds()) {
-          checkArgument(
-              isPossibleToSubtypeBoth(fromClass, toLowerBound),
-              "Type %s is incompatible with lower bound %s of wildcard type %s",
-              fromClass.getTypeName(),
-              toLowerBound.getTypeName(),
-              to.getTypeName());
-        }
-        for (Type toUpperBound : toWildcardType.getUpperBounds()) {
-          checkArgument(
-              isSubtype(fromClass, toUpperBound),
-              "Type %s is incompatible with upper bound %s of wildcard type %s",
-              fromClass.getTypeName(),
-              toUpperBound.getTypeName(),
-              to.getTypeName());
-        }
-        return; // Okay to say Foo is <?>
-      }
-      // Can't map from a raw class to anything other than itself or a wildcard.
-      // You can't say "assuming String is Integer".
-      // And we don't support "assuming String is T"; user has to say "assuming T is String".
-      throw new IllegalArgumentException("No type mapping from " + fromClass + " to " + to);
-    }
-
-    private static TypeRelationship relationshipForBound(TypeRelationship relationship) {
       switch (relationship) {
         case EQUAL:
-          // from=B
-          // to=Integer
-          // relationship=EQUAL
-          // B == Integer
-          //
-          // formalBound=A
-          // B extends A
-          // -----> Integer extends A
-          // -----> Integer is a subtype of A
-          //
-          // (fallthrough)
-          //
-        case SUBTYPE:
-          // from=U
-          // to=Integer
-          // relationship=SUBTYPE
-          // "Integer is something that extends U"
-          // "Integer is a subtype of U"
-          //
-          // formalBound=T
-          // "U extends T"
-          // ----> "Integer is a subtype of T"
-          //
-          return TypeRelationship.SUBTYPE;
-        case SUPERTYPE:
-          // from=U
-          // to=Number
-          // relationship=SUPERTYPE
-          // "Number is something that is a supertype of U"
-          // "Number is a supertype of U"
-          // "U extends Number"
-          //
-          // formalBound=T
-          // "U extends T"
-          // "U is a subtype of T"
-          // "T is a supertype of U"
-          // anything we can conclude about T w.r.t Number?
-          // it can't be totally unrelated to Number, right?
-          // it has to be either a supertype of Number or a subtype of Number?
-          //   T=Integer works, T=Object works?, T=String doesn't work, right?
-          //         yes              yes          right
-          // so T is RELATED to Number
-          //
-          // (fallthrough)
-          //
+          constraints.setExactType(value);
+          return;
         case RELATED:
-          //
-          // from=A
-          // to=Number
-          // relationship=RELATED
-          // "A extends Number or Number extends A"
-          //
-          // bound=B
-          // A extends B
-          //
-          // Could B be String?
-          // no
-          // could B be Object?
-          // yes
-          // could B be Integer?
-          // yes
-          //
-          return TypeRelationship.RELATED;
+          constraints.addRelatedType(value);
+          return;
+        case SUPERTYPE:
+          constraints.addSupertype(value);
+          return;
+        case SUBTYPE:
+          constraints.addSubtype(value);
+          return;
       }
       throw new AssertionError("Unknown type relationship: " + relationship);
     }
 
-    private static final class Seen {
-      private final Type from;
-      private final Type to;
-      private final TypeRelationship relationship;
-
-      Seen(Type from, Type to, TypeRelationship relationship) {
-        this.from = checkNotNull(from);
-        this.to = checkNotNull(to);
-        this.relationship = checkNotNull(relationship);
+    /** Adds all of the specified mappings to this instance. */
+    private void putAll(TypeMappings that) {
+      checkNotNull(that);
+      for (Map.Entry<TypeVariableKey, TypeVariableConstraints> entry : that.map.entrySet()) {
+        TypeVariableKey key = entry.getKey();
+        TypeVariableConstraints thoseConstraints = entry.getValue();
+        TypeVariableConstraints theseConstraints = this.map.get(key);
+        if (theseConstraints == null) {
+          theseConstraints = new TypeVariableConstraints(key);
+          this.map.put(key, theseConstraints);
+        }
+        theseConstraints.addAll(thoseConstraints);
       }
+      this.lubTypes.addAll(that.lubTypes);
+    }
 
-      @Override
-      public boolean equals(@Nullable Object object) {
-        if (object instanceof Seen) {
-          Seen that = (Seen) object;
-          return this.from.equals(that.from)
-              && this.to.equals(that.to)
-              && this.relationship.equals(that.relationship);
+    /**
+     * Returns the combination of the specified mappings.
+     *
+     * @throws IllegalArgumentException if the specified mappings are incompatible with each other
+     */
+    static TypeMappings combine(TypeMappings a, TypeMappings b) {
+      checkNotNull(a);
+      checkNotNull(b);
+      TypeMappings combined = new TypeMappings();
+      combined.putAll(a);
+      combined.putAll(b);
+      return combined;
+    }
+
+    /**
+     * Returns the mappings that result from declaring {@code actual} as a subtype of {@code
+     * formal}.  For example, {@code actual} may be the actual type of a variable referring to an
+     * instance of a class while {@code formal} is the declared generic type of that class.
+     *
+     * @throws IllegalArgumentException if the type declaration is invalid
+     */
+    static TypeMappings fromTypeDeclaration(Type formal, Type actual) {
+      checkNotNull(formal);
+      checkNotNull(actual);
+      Builder builder = new Builder();
+      builder.populateTypeMappings(formal, actual, TypeRelationship.SUBTYPE);
+      return builder.mappings;
+    }
+
+    private static final class Builder {
+      final TypeMappings mappings = new TypeMappings();
+      private final Set<Seen> seen = new LinkedHashSet<>();
+      boolean isForLeastUpperBound;
+
+      void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
+        //System.out.println(actual.getTypeName() + " is " + relationship + " to " + formal.getTypeName());
+        checkNotNull(from);
+        checkNotNull(to);
+        checkNotNull(relationship);
+        if (from.equals(to)) {
+          return;
+        }
+        if (!seen.add(new Seen(from, to, relationship))) {
+          return;
+        }
+        if (from instanceof TypeVariable) {
+          visitTypeVariable((TypeVariable<?>) from, to, relationship);
+        } else if (from instanceof WildcardType) {
+          visitWildcardType((WildcardType) from, to, relationship);
+        } else if (from instanceof ParameterizedType) {
+          visitParameterizedType((ParameterizedType) from, to, relationship);
+        } else if (from instanceof GenericArrayType) {
+          visitGenericArrayType((GenericArrayType) from, to, relationship);
+        } else if (from instanceof Class) {
+          visitClass((Class<?>) from, to, relationship);
         } else {
-          return false;
+          throw new AssertionError("Unknown type: " + from);
         }
       }
 
-      @Override
-      public int hashCode() {
-        return Objects.hashCode(from, to, relationship);
+      private void visitTypeVariable(
+          TypeVariable<?> typeVariable, Type to, TypeRelationship relationship) {
+        TypeVariableKey key = new TypeVariableKey(typeVariable);
+        mappings.put(key, to, relationship);
+        for (Type bound : typeVariable.getBounds()) {
+          if (bound instanceof Class) {
+            // The Object.class bound is redundant, and it causes problems when binding T[] to int[].
+            if (!bound.equals(Object.class)) {
+              mappings.put(key, bound, TypeRelationship.SUPERTYPE);
+            }
+          } else {
+            TypeRelationship boundRelationship = relationshipForBound(relationship);
+            if (bound instanceof TypeVariable
+                || !boundRelationship.equals(TypeRelationship.RELATED)) {
+              populateTypeMappings(bound, to, boundRelationship);
+            }
+          }
+        }
+      }
+
+      private void visitWildcardType(
+          WildcardType fromWildcardType, Type to, TypeRelationship relationship) {
+        if (!(to instanceof WildcardType)) {
+          for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
+            if (!(fromLowerBound instanceof Class)) {
+              populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
+            }
+          }
+          for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
+            if (!(fromUpperBound instanceof Class)) {
+              populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
+            }
+          }
+          return;
+        }
+        WildcardType toWildcardType = (WildcardType) to;
+        Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
+        Type[] toUpperBounds = toWildcardType.getUpperBounds();
+        Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
+        Type[] toLowerBounds = toWildcardType.getLowerBounds();
+        checkArgument(
+            fromUpperBounds.length == toUpperBounds.length
+                && fromLowerBounds.length == toLowerBounds.length,
+            "Incompatible type: %s vs. %s",
+            fromWildcardType,
+            to);
+        for (int i = 0; i < fromLowerBounds.length; i++) {
+          populateTypeMappings(fromLowerBounds[i], toLowerBounds[i], TypeRelationship.SUPERTYPE);
+        }
+        for (int i = 0; i < fromUpperBounds.length; i++) {
+          populateTypeMappings(fromUpperBounds[i], toUpperBounds[i], TypeRelationship.SUBTYPE);
+        }
+      }
+
+      private void visitParameterizedType(
+          ParameterizedType fromParameterizedType, Type to, TypeRelationship relationship) {
+        if (to instanceof WildcardType) {
+          WildcardType toWildcardType = (WildcardType) to;
+          for (Type toLowerBound : toWildcardType.getLowerBounds()) {
+            populateTypeMappings(fromParameterizedType, toLowerBound, TypeRelationship.SUBTYPE);
+          }
+          for (Type toUpperBound : toWildcardType.getUpperBounds()) {
+            if (!toUpperBound.equals(Object.class)) {
+              populateTypeMappings(fromParameterizedType, toUpperBound, TypeRelationship.SUPERTYPE);
+            }
+          }
+          return; // Okay to say Foo<A> is <?>
+        }
+        if (relationship.equals(TypeRelationship.EQUAL)) {
+          checkArgument(
+              to instanceof ParameterizedType,
+              "%s is not a parameterized type",
+              to.getTypeName());
+          ParameterizedType toParameterizedType = (ParameterizedType) to;
+          Class<?> formalRawType = (Class<?>) fromParameterizedType.getRawType();
+          Class<?> actualRawType = (Class<?>) toParameterizedType.getRawType();
+          checkArgument(
+              formalRawType.equals(actualRawType),
+              "Inconsistent raw type: %s vs. %s",
+              fromParameterizedType.getTypeName(),
+              toParameterizedType.getTypeName());
+        }
+        ParameterizedType toParameterizedType = getParameterizedSupertype(to, fromParameterizedType);
+        Type[] fromArgs = fromParameterizedType.getActualTypeArguments();
+        Type[] toArgs = toParameterizedType.getActualTypeArguments();
+        checkArgument(
+            fromArgs.length == toArgs.length,
+            "%s not compatible with %s",
+            fromParameterizedType,
+            toParameterizedType);
+        Type fromOwnerType = fromParameterizedType.getOwnerType();
+        Type toOwnerType = toParameterizedType.getOwnerType();
+        if (fromOwnerType != null && toOwnerType != null) {
+          // TODO: Add tests that exercise this behavior.
+          populateTypeMappings(fromOwnerType, toOwnerType, relationship);
+        }
+        for (int i = 0; i < fromArgs.length; i++) {
+          Type fromArg = fromArgs[i];
+          Type toArg = toArgs[i];
+          if (fromArg instanceof WildcardType) {
+            checkArgument(
+                toArg instanceof WildcardType
+                    || !relationship.equals(TypeRelationship.EQUAL),
+                "%s not compatible with %s because parameter %s at index %s "
+                    + "is not compatible with argument %s",
+                fromParameterizedType.getTypeName(),
+                to.getTypeName(),
+                fromArg.getTypeName(),
+                i,
+                toArg.getTypeName());
+          }
+          if (toArg instanceof WildcardType) {
+            checkArgument(
+                fromArg instanceof Class
+                    || fromArg instanceof WildcardType
+                    || fromArg instanceof TypeVariable,
+                "%s not compatible with %s because parameter %s at index %s "
+                    + "is not compatible with argument capture of %s",
+                fromParameterizedType.getTypeName(),
+                to.getTypeName(),
+                fromArg.getTypeName(),
+                i,
+                toArg.getTypeName());
+          }
+          TypeRelationship argRelationship =
+              isForLeastUpperBound ? TypeRelationship.SUBTYPE : TypeRelationship.EQUAL;
+          populateTypeMappings(fromArg, toArg, argRelationship);
+        }
+      }
+
+      private void visitGenericArrayType(GenericArrayType fromArrayType, Type to, TypeRelationship relationship) {
+        if (to instanceof WildcardType) {
+          WildcardType toWildcardType = (WildcardType) to;
+          for (Type toLowerBound : toWildcardType.getLowerBounds()) {
+            populateTypeMappings(fromArrayType, toLowerBound, TypeRelationship.SUBTYPE);
+          }
+          for (Type toUpperBound : toWildcardType.getUpperBounds()) {
+            if (!toUpperBound.equals(Object.class)) {
+              populateTypeMappings(fromArrayType, toUpperBound, TypeRelationship.SUPERTYPE);
+            }
+          }
+          return; // Okay to say A[] is <?>
+        }
+        Type componentType = Types.getComponentType(to);
+        checkArgument(componentType != null, "%s is not an array type.", to);
+        populateTypeMappings(fromArrayType.getGenericComponentType(), componentType, relationship);
+      }
+
+      private void visitClass(Class<?> fromClass, Type to, TypeRelationship relationship) {
+        if (to instanceof WildcardType) {
+          WildcardType toWildcardType = (WildcardType) to;
+          for (Type toLowerBound : toWildcardType.getLowerBounds()) {
+            checkArgument(
+                isPossibleToSubtypeBoth(fromClass, toLowerBound),
+                "Type %s is incompatible with lower bound %s of wildcard type %s",
+                fromClass.getTypeName(),
+                toLowerBound.getTypeName(),
+                to.getTypeName());
+          }
+          for (Type toUpperBound : toWildcardType.getUpperBounds()) {
+            checkArgument(
+                isSubtype(fromClass, toUpperBound),
+                "Type %s is incompatible with upper bound %s of wildcard type %s",
+                fromClass.getTypeName(),
+                toUpperBound.getTypeName(),
+                to.getTypeName());
+          }
+          return; // Okay to say Foo is <?>
+        }
+        // Can't map from a raw class to anything other than itself or a wildcard.
+        // You can't say "assuming String is Integer".
+        // And we don't support "assuming String is T"; user has to say "assuming T is String".
+        throw new IllegalArgumentException("No type mapping from " + fromClass + " to " + to);
+      }
+
+      private static TypeRelationship relationshipForBound(TypeRelationship relationship) {
+        switch (relationship) {
+          case EQUAL:
+            // from=B
+            // to=Integer
+            // relationship=EQUAL
+            // B == Integer
+            //
+            // formalBound=A
+            // B extends A
+            // -----> Integer extends A
+            // -----> Integer is a subtype of A
+            //
+            // (fallthrough)
+            //
+          case SUBTYPE:
+            // from=U
+            // to=Integer
+            // relationship=SUBTYPE
+            // "Integer is something that extends U"
+            // "Integer is a subtype of U"
+            //
+            // formalBound=T
+            // "U extends T"
+            // ----> "Integer is a subtype of T"
+            //
+            return TypeRelationship.SUBTYPE;
+          case SUPERTYPE:
+            // from=U
+            // to=Number
+            // relationship=SUPERTYPE
+            // "Number is something that is a supertype of U"
+            // "Number is a supertype of U"
+            // "U extends Number"
+            //
+            // formalBound=T
+            // "U extends T"
+            // "U is a subtype of T"
+            // "T is a supertype of U"
+            // anything we can conclude about T w.r.t Number?
+            // it can't be totally unrelated to Number, right?
+            // it has to be either a supertype of Number or a subtype of Number?
+            //   T=Integer works, T=Object works?, T=String doesn't work, right?
+            //         yes              yes          right
+            // so T is RELATED to Number
+            //
+            // (fallthrough)
+            //
+          case RELATED:
+            //
+            // from=A
+            // to=Number
+            // relationship=RELATED
+            // "A extends Number or Number extends A"
+            //
+            // bound=B
+            // A extends B
+            //
+            // Could B be String?
+            // no
+            // could B be Object?
+            // yes
+            // could B be Integer?
+            // yes
+            //
+            return TypeRelationship.RELATED;
+        }
+        throw new AssertionError("Unknown type relationship: " + relationship);
+      }
+
+      private static final class Seen {
+        private final Type from;
+        private final Type to;
+        private final TypeRelationship relationship;
+
+        Seen(Type from, Type to, TypeRelationship relationship) {
+          this.from = checkNotNull(from);
+          this.to = checkNotNull(to);
+          this.relationship = checkNotNull(relationship);
+        }
+
+        @Override
+        public boolean equals(@Nullable Object object) {
+          if (object instanceof Seen) {
+            Seen that = (Seen) object;
+            return this.from.equals(that.from)
+                && this.to.equals(that.to)
+                && this.relationship.equals(that.relationship);
+          } else {
+            return false;
+          }
+        }
+
+        @Override
+        public int hashCode() {
+          return Objects.hashCode(from, to, relationship);
+        }
       }
     }
   }
@@ -1216,7 +1321,7 @@ public final class TypeResolver {
         }
       }
       Type genericIntersectionType = newIntersectionType(canonicalGenericTypes);
-      TypeMappingsBuilder builder = new TypeMappingsBuilder();
+      TypeMappings.Builder builder = new TypeMappings.Builder();
       builder.isForLeastUpperBound = true;
       for (Type genericType : canonicalGenericTypes) {
         if (genericType instanceof Class) {
@@ -1266,112 +1371,6 @@ public final class TypeResolver {
       newMappings.lubTypes.addAll(canonicalGenericTypes);
       TypeResolver resolver = new TypeResolver().where(newMappings);
       return resolver.resolveType(genericIntersectionType);
-    }
-  }
-
-  /**
-   * Mappings from {@link TypeVariable}s to {@linkplain TypeVariableConstraints constraints} for
-   * those type variables.
-   */
-  private static final class TypeMappings {
-    private final Map<TypeVariableKey, TypeVariableConstraints> map = new LinkedHashMap<>();
-
-    /**
-     * Used to prevent infinite recursion in least upper bound (lub) computation.
-     */
-    private final Set<Type> lubTypes = new LinkedHashSet<>();
-
-    @Override
-    public String toString() {
-      return map.values().toString();
-    }
-
-    /**
-     * Resolves the type of the specified type variable.  Returns {@code null} if nothing is known
-     * about the type variable.
-     */
-    @Nullable Type resolve(TypeVariableKey key) {
-      checkNotNull(key);
-      TypeVariableConstraints constraints = map.get(key);
-      return (constraints == null) ? null : constraints.resolve(this);
-    }
-
-    /**
-     * Adds the specified mapping to this instance.
-     *
-     * @param key the type variable
-     * @param value the type to associated with the type variable
-     * @param relationship the relationship between the type variable and the specified type
-     */
-    void put(TypeVariableKey key, Type value, TypeRelationship relationship) {
-      checkNotNull(key);
-      checkNotNull(value);
-      checkNotNull(relationship);
-      TypeVariableConstraints constraints = map.get(key);
-      if (constraints == null) {
-        constraints = new TypeVariableConstraints(key);
-        map.put(key, constraints);
-      }
-      switch (relationship) {
-        case EQUAL:
-          constraints.setExactType(value);
-          return;
-        case RELATED:
-          constraints.addRelatedType(value);
-          return;
-        case SUPERTYPE:
-          constraints.addSupertype(value);
-          return;
-        case SUBTYPE:
-          constraints.addSubtype(value);
-          return;
-      }
-      throw new AssertionError("Unknown type relationship: " + relationship);
-    }
-
-    /** Adds all of the specified mappings to this instance. */
-    private void putAll(TypeMappings that) {
-      checkNotNull(that);
-      for (Map.Entry<TypeVariableKey, TypeVariableConstraints> entry : that.map.entrySet()) {
-        TypeVariableKey key = entry.getKey();
-        TypeVariableConstraints thoseConstraints = entry.getValue();
-        TypeVariableConstraints theseConstraints = this.map.get(key);
-        if (theseConstraints == null) {
-          theseConstraints = new TypeVariableConstraints(key);
-          this.map.put(key, theseConstraints);
-        }
-        theseConstraints.addAll(thoseConstraints);
-      }
-      this.lubTypes.addAll(that.lubTypes);
-    }
-
-    /**
-     * Returns the combination of the specified mappings.
-     *
-     * @throws IllegalArgumentException if the specified mappings are incompatible with each other
-     */
-    static TypeMappings combine(TypeMappings a, TypeMappings b) {
-      checkNotNull(a);
-      checkNotNull(b);
-      TypeMappings combined = new TypeMappings();
-      combined.putAll(a);
-      combined.putAll(b);
-      return combined;
-    }
-
-    /**
-     * Returns the mappings that result from declaring {@code actual} as a subtype of {@code
-     * formal}.  For example, {@code actual} may be the actual type of a variable referring to an
-     * instance of a class while {@code formal} is the declared generic type of that class.
-     *
-     * @throws IllegalArgumentException if the type declaration is invalid
-     */
-    static TypeMappings fromTypeDeclaration(Type formal, Type actual) {
-      checkNotNull(formal);
-      checkNotNull(actual);
-      TypeMappingsBuilder builder = new TypeMappingsBuilder();
-      builder.populateTypeMappings(formal, actual, TypeRelationship.SUBTYPE);
-      return builder.mappings;
     }
   }
 
