@@ -236,7 +236,7 @@ public class TypeResolverTest extends TestCase {
     }
   }
 
-  public <K, V> void testWhere_actualArgHasWildcard() {
+  public <K, V> void disabled_testWhere_actualArgHasWildcard() {
     TypeResolver resolver =
         new TypeResolver()
             .where(
@@ -258,7 +258,7 @@ public class TypeResolverTest extends TestCase {
             .resolveType(subtype));
   }
 
-  public <T> void testWhere_mapFromWildcardToParameterized() {
+  public <T> void disabled_testWhere_mapFromWildcardToParameterized() {
     Type subtype = new TypeCapture<TypedListKeyMap<T>>() {}.capture();
     assertEquals(
         new TypeCapture<TypedListKeyMap<String>>() {}.capture(),
