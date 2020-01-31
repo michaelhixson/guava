@@ -513,11 +513,9 @@ public final class TypeResolver {
     EQUAL,
 
     /**
-     * That type is related to this type.  Two types are related when it is possible for a third
-     * type to subtype both of those two types.
+     * That type {@linkplain #intersecting(Type, Type) intersects} this type.
      */
-    // TODO: Come up with a better name for this.  NOT_DISJOINT?  INTERSECT?
-    RELATED,
+    INTERSECTING,
 
     /** That type is a supertype of this type. */
     SUPERTYPE,
@@ -530,7 +528,7 @@ public final class TypeResolver {
   private static final class TypeVariableConstraints {
     private final TypeVariableKey key;
     private @Nullable Type exactType;
-    private @Nullable Set<Type> relatedTypes;
+    private @Nullable Set<Type> intersectingTypes;
     private @Nullable Set<Type> supertypes;
     private @Nullable Set<Type> subtypes;
 
@@ -539,9 +537,9 @@ public final class TypeResolver {
       return MoreObjects
           .toStringHelper(this)
           .omitNullValues()
-          .add("key", key + " (from " + key.var.getGenericDeclaration() + ")")
+          .add("key", key)
           .add("exactType", exactType)
-          .add("relatedTypes", relatedTypes)
+          .add("intersectingTypes", intersectingTypes)
           .add("supertypes", supertypes)
           .add("subtypes", subtypes)
           .toString();
@@ -565,12 +563,7 @@ public final class TypeResolver {
       if (supertypes != null) {
         return greatestLowerBound();
       }
-      if (relatedTypes != null) {
-        return Object.class;
-      }
-      // This should never occur because whenever we create an instance, we immediately call one of
-      // its setters, meaning that at least one of these fields will be non-null.
-      throw new IllegalStateException();
+      return Object.class;
     }
 
     /**
@@ -580,56 +573,56 @@ public final class TypeResolver {
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    boolean setExactType(Type type) {
-      checkNotNull(type);
-      checkNotMappedToSelf(type);
-      checkExactTypeAndRelatedTypes(type, relatedTypes);
-      checkExactTypeAndSupertypes(type, supertypes);
-      checkExactTypeAndSubtypes(type, subtypes);
-      if (exactType == null) {
-        exactType = type;
+    boolean setExactType(Type exactType) {
+      checkNotNull(exactType);
+      checkNotMappedToSelf(exactType);
+      checkExactTypeAndIntersectingTypes(exactType, intersectingTypes);
+      checkExactTypeAndSupertypes(exactType, supertypes);
+      checkExactTypeAndSubtypes(exactType, subtypes);
+      if (this.exactType == null) {
+        this.exactType = exactType;
         return true;
       }
       checkArgument(
-          exactType.equals(type),
+          this.exactType.equals(exactType),
           "Type %s must be exactly %s, so it cannot be %s",
           key,
-          exactType.getTypeName(),
-          type.getTypeName());
+          this.exactType.getTypeName(),
+          exactType.getTypeName());
       return false;
     }
 
     /**
-     * Adds the constraint that the specified type is related to this type variable's type.  Two
-     * types are related when it is possible for a third type to subtype both of those two types.
+     * Adds the constraint that the specified type {@linkplain #intersecting(Type, Type)} intersects}
+     * this type variable's type.
      *
      * @return {@code true} if this instance was modified as a result of the call
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    boolean addRelatedType(Type relatedType) {
-      checkNotNull(relatedType);
-      checkNotMappedToSelf(relatedType);
+    boolean addIntersectingType(Type intersectingType) {
+      checkNotNull(intersectingType);
+      checkNotMappedToSelf(intersectingType);
       // No need to re-check the other bounds.
-      ImmutableSet<Type> newRelatedTypes = ImmutableSet.of(relatedType);
-      checkExactTypeAndRelatedTypes(exactType, newRelatedTypes);
-      checkRelatedTypesAndSupertypes(newRelatedTypes, supertypes);
-      checkRelatedTypesAndSubtypes(newRelatedTypes, subtypes);
-      if (relatedTypes != null) {
-        for (Type existingRelatedType : relatedTypes) {
+      ImmutableSet<Type> newIntersectingTypes = ImmutableSet.of(intersectingType);
+      checkExactTypeAndIntersectingTypes(exactType, newIntersectingTypes);
+      checkIntersectingTypesAndSupertypes(newIntersectingTypes, supertypes);
+      checkIntersectingTypesAndSubtypes(newIntersectingTypes, subtypes);
+      if (intersectingTypes != null) {
+        for (Type existingIntersectingType : intersectingTypes) {
           // TODO: Write a test that throws here.
           checkArgument(
-              isPossibleToSubtypeBoth(existingRelatedType, relatedType),
-              "Type %s must be related to %s, so it cannot be related to %s",
+              intersecting(existingIntersectingType, intersectingType),
+              "Type %s must intersect %s, so it cannot intersect %s",
               key,
-              existingRelatedType.getTypeName(),
-              relatedType.getTypeName());
+              existingIntersectingType.getTypeName(),
+              intersectingType.getTypeName());
         }
       }
-      if (relatedTypes == null) {
-        relatedTypes = new LinkedHashSet<>();
+      if (intersectingTypes == null) {
+        intersectingTypes = new LinkedHashSet<>();
       }
-      return relatedTypes.add(relatedType);
+      return intersectingTypes.add(intersectingType);
     }
 
     /**
@@ -645,12 +638,12 @@ public final class TypeResolver {
       // No need to re-check the other bounds.
       ImmutableSet<Type> newSupertypes = ImmutableSet.of(supertype);
       checkExactTypeAndSupertypes(exactType, newSupertypes);
-      checkRelatedTypesAndSupertypes(relatedTypes, newSupertypes);
+      checkIntersectingTypesAndSupertypes(intersectingTypes, newSupertypes);
       checkSupertypesAndSubtypes(newSupertypes, subtypes);
       if (supertypes != null) {
         for (Type existingSupertype : supertypes) {
           checkArgument(
-              isPossibleToSubtypeBoth(existingSupertype, supertype),
+              intersecting(existingSupertype, supertype),
               "Type %s must be a subtype of %s, so it cannot be a subtype of %s",
               key,
               existingSupertype.getTypeName(),
@@ -676,7 +669,7 @@ public final class TypeResolver {
       // No need to re-check the other bounds.
       ImmutableSet<Type> newSubtypes = ImmutableSet.of(subtype);
       checkExactTypeAndSubtypes(exactType, newSubtypes);
-      checkRelatedTypesAndSubtypes(relatedTypes, newSubtypes);
+      checkIntersectingTypesAndSubtypes(intersectingTypes, newSubtypes);
       checkSupertypesAndSubtypes(supertypes, newSubtypes);
       if (subtypes == null) {
         subtypes = new LinkedHashSet<>();
@@ -695,9 +688,9 @@ public final class TypeResolver {
       if (constraints.exactType != null) {
         setExactType(constraints.exactType);
       }
-      if (constraints.relatedTypes != null) {
-        for (Type relatedType : constraints.relatedTypes) {
-          addRelatedType(relatedType);
+      if (constraints.intersectingTypes != null) {
+        for (Type intersectingType : constraints.intersectingTypes) {
+          addIntersectingType(intersectingType);
         }
       }
       if (constraints.supertypes != null) {
@@ -724,28 +717,28 @@ public final class TypeResolver {
 
     /**
      * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
-     *         {@code exactType} and related to all of {@code relatedTypes}
+     *         {@code exactType} and to intersect all of {@code intersectingTypes}
      */
-    private void checkExactTypeAndRelatedTypes(
+    private void checkExactTypeAndIntersectingTypes(
         @Nullable Type exactType,
-        @Nullable Set<Type> relatedTypes) {
-      if (exactType == null || relatedTypes == null) {
+        @Nullable Set<Type> intersectingTypes) {
+      if (exactType == null || intersectingTypes == null) {
         return;
       }
-      for (Type relatedType : relatedTypes) {
+      for (Type intersectingType : intersectingTypes) {
         checkArgument(
-            isPossibleToSubtypeBoth(exactType, relatedType),
+            intersecting(exactType, intersectingType),
             "No type can satisfy the constraints of %s, "
-                + "which must be equal to %s and related to %s",
+                + "which must be equal to %s and intersect %s",
             key,
             exactType.getTypeName(),
-            relatedType.getTypeName());
+            intersectingType.getTypeName());
       }
     }
 
     /**
      * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
-     *         {@code exactType} and a subtype of all of {@code supertypes}
+     *         {@code exactType} and to be a subtype of all of {@code supertypes}
      */
     private void checkExactTypeAndSupertypes(
         @Nullable Type exactType,
@@ -766,7 +759,7 @@ public final class TypeResolver {
 
     /**
      * @throws IllegalArgumentException if it is impossible for any type variable to be equal to
-     *         {@code exactType} and a supertype of all of {@code subtypes}
+     *         {@code exactType} and to be a supertype of all of {@code subtypes}
      */
     private void checkExactTypeAndSubtypes(
         @Nullable Type exactType,
@@ -786,46 +779,46 @@ public final class TypeResolver {
     }
 
     /**
-     * @throws IllegalArgumentException if it is impossible for any type variable to be related to
-     *         all of {@code relatedTypes} and a subtype of all of {@code supertypes}
+     * @throws IllegalArgumentException if it is impossible for any type variable to intersect all
+     *         of {@code intersectingTypes} and to be a subtype of all of {@code supertypes}
      */
-    private void checkRelatedTypesAndSupertypes(
-        @Nullable Set<Type> relatedTypes,
+    private void checkIntersectingTypesAndSupertypes(
+        @Nullable Set<Type> intersectingTypes,
         @Nullable Set<Type> supertypes) {
-      if (relatedTypes == null || supertypes == null) {
+      if (intersectingTypes == null || supertypes == null) {
         return;
       }
-      for (Type relatedType : relatedTypes) {
+      for (Type intersectingType : intersectingTypes) {
         for (Type supertype : supertypes) {
           checkArgument(
-              isPossibleToSubtypeBoth(relatedType, supertype),
+              intersecting(intersectingType, supertype),
               "No type can satisfy the constraints of %s, "
-                  + "which must be related to %s and subtype of %s",
+                  + "which must intersect %s and be a subtype of %s",
               key,
-              relatedType.getTypeName(),
+              intersectingType.getTypeName(),
               supertype.getTypeName());
         }
       }
     }
 
     /**
-     * @throws IllegalArgumentException if it is impossible for any type variable to be related to
-     *         all of {@code relatedTypes} and a supertype of of all of {@code subtypes}
+     * @throws IllegalArgumentException if it is impossible for any type variable to intersect all
+     *         of {@code intersectingTypes} and to be a supertype of of all of {@code subtypes}
      */
-    private void checkRelatedTypesAndSubtypes(
-        @Nullable Set<Type> relatedTypes,
+    private void checkIntersectingTypesAndSubtypes(
+        @Nullable Set<Type> intersectingTypes,
         @Nullable Set<Type> subtypes) {
-      if (relatedTypes == null || subtypes == null) {
+      if (intersectingTypes == null || subtypes == null) {
         return;
       }
-      for (Type relatedType : relatedTypes) {
+      for (Type intersectingType : intersectingTypes) {
         for (Type subtype : subtypes) {
           checkArgument(
-              isPossibleToSubtypeBoth(relatedType, subtype),
+              intersecting(intersectingType, subtype),
               "No type can satisfy the constraints of %s, "
-                  + "which must be related to %s and supertype of %s",
+                  + "which must intersect %s and be a supertype of %s",
               key,
-              relatedType.getTypeName(),
+              intersectingType.getTypeName(),
               subtype.getTypeName());
         }
       }
@@ -845,8 +838,9 @@ public final class TypeResolver {
         for (Type subtype : subtypes) {
           checkArgument(
               isSubtype(subtype, supertype),
+              //intersecting(subtype, supertype),
               "No type can satisfy the constraints of %s, "
-                  + "which must be subtype of %s and supertype of %s",
+                  + "which must be a subtype of %s and a supertype of %s",
               key,
               supertype.getTypeName(),
               subtype.getTypeName());
@@ -1015,8 +1009,8 @@ public final class TypeResolver {
       switch (relationship) {
         case EQUAL:
           return constraints.setExactType(value);
-        case RELATED:
-          return constraints.addRelatedType(value);
+        case INTERSECTING:
+          return constraints.addIntersectingType(value);
         case SUPERTYPE:
           return constraints.addSupertype(value);
         case SUBTYPE:
@@ -1076,7 +1070,7 @@ public final class TypeResolver {
     boolean isForLeastUpperBound;
 
     void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
-      //System.out.println(from.getTypeName() + " is " + relationship + " to " + to.getTypeName());
+      //System.out.println("from " from.getTypeName() + " to " + to.getTypeName() + " as " + relationship);
       checkNotNull(from);
       checkNotNull(to);
       checkNotNull(relationship);
@@ -1113,7 +1107,7 @@ public final class TypeResolver {
         } else {
           TypeRelationship boundRelationship = relationshipForBound(relationship);
           if (bound instanceof TypeVariable
-              || !boundRelationship.equals(TypeRelationship.RELATED)) {
+              || !boundRelationship.equals(TypeRelationship.INTERSECTING)) {
             populateTypeMappings(bound, to, boundRelationship);
           }
         }
@@ -1122,13 +1116,15 @@ public final class TypeResolver {
 
     private void visitWildcardType(
         WildcardType fromWildcardType, Type to, TypeRelationship relationship) {
+      Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
+      Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
       if (!(to instanceof WildcardType)) {
-        for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
+        for (Type fromLowerBound : fromLowerBounds) {
           if (!(fromLowerBound instanceof Class)) {
             populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
           }
         }
-        for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
+        for (Type fromUpperBound : fromUpperBounds) {
           if (!(fromUpperBound instanceof Class)) {
             populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
           }
@@ -1136,21 +1132,27 @@ public final class TypeResolver {
         return;
       }
       WildcardType toWildcardType = (WildcardType) to;
-      Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
-      Type[] toUpperBounds = toWildcardType.getUpperBounds();
-      Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
       Type[] toLowerBounds = toWildcardType.getLowerBounds();
-      checkArgument(
-          fromUpperBounds.length == toUpperBounds.length
-              && fromLowerBounds.length == toLowerBounds.length,
-          "Incompatible type: %s vs. %s",
-          fromWildcardType,
-          to);
-      for (int i = 0; i < fromLowerBounds.length; i++) {
-        populateTypeMappings(fromLowerBounds[i], toLowerBounds[i], TypeRelationship.SUPERTYPE);
+      Type[] toUpperBounds = toWildcardType.getUpperBounds();
+      if ((fromLowerBounds.length == 0 && toLowerBounds.length > 0)
+          || (fromLowerBounds.length > 0 && toLowerBounds.length == 0)) {
+        for (Type fromLowerBound : fromLowerBounds) {
+          populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
+        }
+        for (Type fromUpperBound : fromUpperBounds) {
+          populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
+        }
+        return;
       }
-      for (int i = 0; i < fromUpperBounds.length; i++) {
-        populateTypeMappings(fromUpperBounds[i], toUpperBounds[i], TypeRelationship.SUBTYPE);
+      for (Type fromLowerBound : fromLowerBounds) {
+        for (Type toLowerBound : toLowerBounds) {
+          populateTypeMappings(fromLowerBound, toLowerBound, TypeRelationship.SUPERTYPE);
+        }
+      }
+      for (Type fromUpperBound : fromUpperBounds) {
+        for (Type toUpperBound : toUpperBounds) {
+          populateTypeMappings(fromUpperBound, toUpperBound, TypeRelationship.SUBTYPE);
+        }
       }
     }
 
@@ -1258,7 +1260,7 @@ public final class TypeResolver {
         WildcardType toWildcardType = (WildcardType) to;
         for (Type toLowerBound : toWildcardType.getLowerBounds()) {
           checkArgument(
-              isPossibleToSubtypeBoth(fromClass, toLowerBound),
+              intersecting(fromClass, toLowerBound),
               "Type %s is incompatible with lower bound %s of wildcard type %s",
               fromClass.getTypeName(),
               toLowerBound.getTypeName(),
@@ -1321,15 +1323,15 @@ public final class TypeResolver {
           // it can't be totally unrelated to Number, right?
           //   T=Integer works, T=Object works?, T=String doesn't work, right?
           //         yes              yes          right
-          // so T is RELATED to Number
+          // so T intersects Number
           //
           // (fallthrough)
           //
-        case RELATED:
+        case INTERSECTING:
           //
           // from=A
           // to=Number
-          // relationship=RELATED
+          // relationship=INTERSECTING
           // "a type may extend both A and Number"
           // "A intersects Number"
           //
@@ -1343,7 +1345,7 @@ public final class TypeResolver {
           // could B be Integer?
           // yes
           //
-          return TypeRelationship.RELATED;
+          return TypeRelationship.INTERSECTING;
       }
       throw new AssertionError("Unknown type relationship: " + relationship);
     }
@@ -1361,15 +1363,35 @@ public final class TypeResolver {
     if (types.size() == 1) {
       return types.iterator().next();
     }
-    return new Types.WildcardTypeImpl(new Type[0], types.toArray(new Type[0]));
+    if (false) {
+      // TODO: This is generally preferred, but it runs into issues with our wildcard-to-wildcard
+      //       TypeMappingsBuilder implementation.  That implementation has other issues, so once we
+      //       fix those, try re-enabling this block again and see if things work.
+      return new Types.WildcardTypeImpl(new Type[0], types.toArray(new Type[0]));
+    }
+    Type[] bounds = types.toArray(new Type[0]);
+    StringBuilder name = new StringBuilder(bounds[0].getTypeName());
+    for (int i = 1; i < bounds.length; i++) {
+      name.append(" & ").append(bounds[i].getTypeName());
+    }
+    return Types.newArtificialTypeVariable(
+        TypeResolver.class,
+        name.toString(),
+        bounds);
   }
 
   /**
-   * Returns {@code true} if it is possible for any type to be a subtype of both {@code a} and
-   * {@code b}.
+   * Returns {@code true} if {@code a} and {@code b} are intersecting types.  Two types are said to
+   * intersect when it is possible for some type to be a subtype of both of those types.
+   *
+   * <p>"Intersecting" is the antonym of "disjoint".  Two types are intersecting when they are not
+   * disjoint, and two types are disjoint when they are not intersecting.
+   *
+   * <p>Note that this algorithm does not consider the {@code final} keyword of classes or other
+   * attributes that would prevent classes from being extended.  In that way, this algorithm errs on
+   * the side of assuming that types are intersecting.
    */
-  // TODO: Mention that `final` isn't considered, probably rename this method.
-  private static boolean isPossibleToSubtypeBoth(Type a, Type b) {
+  private static boolean intersecting(Type a, Type b) {
     checkNotNull(a);
     checkNotNull(b);
     return (a instanceof Class && ((Class<?>) a).isInterface())

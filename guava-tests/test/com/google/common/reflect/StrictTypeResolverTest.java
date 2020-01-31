@@ -1744,6 +1744,8 @@ public final class StrictTypeResolverTest {
     assertEquals(
         Integer.class,
         returnType);
+
+    array((List<Integer[]>) null);
   }
 
   public static <T extends Serializable> T array(List<? extends T[]> a) { return null; }
@@ -1759,6 +1761,8 @@ public final class StrictTypeResolverTest {
               new TypeCapture<List<CharSequence[]>>() {}.capture());
       fail();
     } catch (IllegalArgumentException expected) {}
+
+    //array((List<CharSequence[]>) null);
   }
 
   @Test
@@ -1815,8 +1819,7 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    List<? extends Comparable<?>[]> list = null;
-    //array(list);
+    //array((List<? extends Comparable<?>[]>) null);
   }
 
   @Test
@@ -1841,6 +1844,7 @@ public final class StrictTypeResolverTest {
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Serializable.class));
 
+    arraySuper((List<? super Comparable<?>[]>) null);
     Serializable a = arraySuper((List<? super Comparable<?>[]>) null);
     Comparable<?> b = arraySuper((List<? super Comparable<?>[]>) null);
   }
@@ -1863,12 +1867,13 @@ public final class StrictTypeResolverTest {
     // List<? super Serializable & capture of ? super Comparable<?>>
     assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
     assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Serializable>>() {}.capture()));
-    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Comparable<?>>>() {}.capture()));
+    // TODO: How to verify the Comparable<?> part?
 
     // Serializable & capture of ? super Comparable<?>[]
-    assertTrue(returnType.getTypeName(), TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<?>[]>() {}.capture()));
     assertTrue(returnType.getTypeName(), TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Serializable[]>() {}.capture()));
+    // TODO: How to verify the Comparable<?>[] part?
 
+    arraySuper2((List<? super Comparable<?>>) null);
     Serializable[] a = arraySuper2((List<? super Comparable<?>>) null);
     Comparable<?>[] b = arraySuper2((List<? super Comparable<?>>) null);
   }
@@ -2483,4 +2488,290 @@ public final class StrictTypeResolverTest {
                 Collectors.toList(),
                 Collections::unmodifiableList));
   }
+
+  @Test
+  public void intersectionTypesAsInput() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("intersectionTypesAsInput", Object.class, Object.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                IntersectABCD.class)
+            .where(
+                method.getGenericParameterTypes()[1],
+                IntersectABCE.class);
+
+    Type returnType1 = resolver.resolveType(method.getGenericReturnType());
+
+    // A & B & C
+    assertTrue(TypeToken.of(returnType1).isSubtypeOf(IntersectA.class));
+    assertTrue(TypeToken.of(returnType1).isSubtypeOf(IntersectB.class));
+    assertTrue(TypeToken.of(returnType1).isSubtypeOf(IntersectC.class));
+    assertFalse(TypeToken.of(returnType1).isSubtypeOf(IntersectD.class));
+    assertFalse(TypeToken.of(returnType1).isSubtypeOf(IntersectE.class));
+
+    TypeResolver resolver2 =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                IntersectABCD.class)
+            .where(
+                method.getGenericParameterTypes()[1],
+                IntersectABDE.class);
+
+    // A & B & D
+    Type returnType2 = resolver2.resolveType(method.getGenericReturnType());
+    assertTrue(TypeToken.of(returnType2).isSubtypeOf(IntersectA.class));
+    assertTrue(TypeToken.of(returnType2).isSubtypeOf(IntersectB.class));
+    assertFalse(TypeToken.of(returnType2).isSubtypeOf(IntersectC.class));
+    assertTrue(TypeToken.of(returnType2).isSubtypeOf(IntersectD.class));
+    assertFalse(TypeToken.of(returnType2).isSubtypeOf(IntersectE.class));
+
+    TypeResolver resolver3 =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                returnType1)
+            .where(
+                method.getGenericParameterTypes()[1],
+                returnType2);
+
+    // A & B
+    Type returnType3 = resolver3.resolveType(method.getGenericReturnType());
+    assertTrue(TypeToken.of(returnType3).isSubtypeOf(IntersectA.class));
+    assertTrue(TypeToken.of(returnType3).isSubtypeOf(IntersectB.class));
+    assertFalse(TypeToken.of(returnType3).isSubtypeOf(IntersectC.class));
+    assertFalse(TypeToken.of(returnType3).isSubtypeOf(IntersectD.class));
+    assertFalse(TypeToken.of(returnType3).isSubtypeOf(IntersectE.class));
+
+    intersectionTypesAsInput((IntersectABCD) null, (IntersectABCE) null);
+    intersectionTypesAsInput((IntersectABCD) null, (IntersectABDE) null);
+
+    intersectionTypesAsInput(
+        intersectionTypesAsInput((IntersectABCD) null, (IntersectABCE) null),
+        intersectionTypesAsInput((IntersectABCD) null, (IntersectABDE) null));
+  }
+
+  interface IntersectA {}
+  interface IntersectB {}
+  interface IntersectC {}
+  interface IntersectD {}
+  interface IntersectE {}
+  interface IntersectABCD extends IntersectA, IntersectB, IntersectC, IntersectD {}
+  interface IntersectABCE extends IntersectA, IntersectB, IntersectC, IntersectE {}
+  interface IntersectABDE extends IntersectA, IntersectB, IntersectD, IntersectE {}
+
+  public static <T> T intersectionTypesAsInput(T a, T b) { return null; }
+
+  @Test
+  public void intersectionTypesAsInput2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("intersectionTypesAsInput2", List.class, List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<IntersectABCD>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<List<IntersectABCE>>() {}.capture());
+
+    Type returnType1 = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? extends A & B & C>
+    assertTrue(returnType1.getTypeName(), TypeToken.of(returnType1).isSubtypeOf(new TypeCapture<List<? extends IntersectA>>() {}.capture()));
+    assertTrue(returnType1.getTypeName(), TypeToken.of(returnType1).isSubtypeOf(new TypeCapture<List<? extends IntersectB>>() {}.capture()));
+    assertTrue(returnType1.getTypeName(), TypeToken.of(returnType1).isSubtypeOf(new TypeCapture<List<? extends IntersectC>>() {}.capture()));
+    assertFalse(returnType1.getTypeName(), TypeToken.of(returnType1).isSubtypeOf(new TypeCapture<List<? extends IntersectD>>() {}.capture()));
+    assertFalse(returnType1.getTypeName(), TypeToken.of(returnType1).isSubtypeOf(new TypeCapture<List<? extends IntersectE>>() {}.capture()));
+
+    TypeResolver resolver2 =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<IntersectABCD>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<List<IntersectABDE>>() {}.capture());
+
+    Type returnType2 = resolver2.resolveType(method.getGenericReturnType());
+
+    // List<? extends A & B & D>
+    assertTrue(returnType2.getTypeName(), TypeToken.of(returnType2).isSubtypeOf(new TypeCapture<List<? extends IntersectA>>() {}.capture()));
+    assertTrue(returnType2.getTypeName(), TypeToken.of(returnType2).isSubtypeOf(new TypeCapture<List<? extends IntersectB>>() {}.capture()));
+    assertFalse(returnType2.getTypeName(), TypeToken.of(returnType2).isSubtypeOf(new TypeCapture<List<? extends IntersectC>>() {}.capture()));
+    assertTrue(returnType2.getTypeName(), TypeToken.of(returnType2).isSubtypeOf(new TypeCapture<List<? extends IntersectD>>() {}.capture()));
+    assertFalse(returnType2.getTypeName(), TypeToken.of(returnType2).isSubtypeOf(new TypeCapture<List<? extends IntersectE>>() {}.capture()));
+
+    TypeResolver resolver3 =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                returnType1)
+            .where(
+                method.getGenericParameterTypes()[1],
+                returnType2);
+
+    Type returnType3 = resolver3.resolveType(method.getGenericReturnType());
+
+    // List<? extends A & B>
+    assertTrue(returnType3.getTypeName(), TypeToken.of(returnType3).isSubtypeOf(new TypeCapture<List<? extends IntersectA>>() {}.capture()));
+    assertTrue(returnType3.getTypeName(), TypeToken.of(returnType3).isSubtypeOf(new TypeCapture<List<? extends IntersectB>>() {}.capture()));
+    assertFalse(returnType3.getTypeName(), TypeToken.of(returnType3).isSubtypeOf(new TypeCapture<List<? extends IntersectC>>() {}.capture()));
+    assertFalse(returnType3.getTypeName(), TypeToken.of(returnType3).isSubtypeOf(new TypeCapture<List<? extends IntersectD>>() {}.capture()));
+    assertFalse(returnType3.getTypeName(), TypeToken.of(returnType3).isSubtypeOf(new TypeCapture<List<? extends IntersectE>>() {}.capture()));
+
+    intersectionTypesAsInput2((List<IntersectABCD>) null, (List<IntersectABCE>) null);
+    intersectionTypesAsInput2((List<IntersectABCD>) null, (List<IntersectABDE>) null);
+
+    intersectionTypesAsInput2(
+        intersectionTypesAsInput2((List<IntersectABCD>) null, (List<IntersectABCE>) null),
+        intersectionTypesAsInput2((List<IntersectABCD>) null, (List<IntersectABDE>) null));
+  }
+
+  public static <T> List<T> intersectionTypesAsInput2(List<? extends T> a, List<? extends T> b) { return null; }
+
+  @Test
+  public void extendsGenericToSuperActual() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("extendsGenericToSuperActual", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? super String>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? extends ? super String>
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            Types.subtypeOf(Types.supertypeOf(String.class))),
+        param0Type);
+
+    // ? super String
+    assertEquals(
+        Types.supertypeOf(String.class),
+        returnType);
+
+    extendsGenericToSuperActual((List<? super String>) null);
+  }
+
+  public static <T> T extendsGenericToSuperActual(List<? extends T> a) { return null; }
+
+  @Test
+  public void extendsGenericToExtendsActual() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("extendsGenericToExtendsActual", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? extends String>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // FIXME: This is resolving to the wrong type.
+    // List<? extends ? extends String>
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            Types.subtypeOf(Types.subtypeOf(String.class))),
+        param0Type);
+
+    // ? extends String
+    assertEquals(
+        Types.subtypeOf(String.class),
+        returnType);
+
+    // FIXME: Notice the difference in the wildcard between these two
+    //        First one involves wildcard capture according to javac... relevant?
+    extendsGenericToExtendsActual((List<? extends String>) null);
+    extendsGenericToExtendsActual2((List<List<? extends String>>) null);
+  }
+
+  public static <T> T extendsGenericToExtendsActual(List<? extends T> a) { return null; }
+
+
+  @Test
+  public void extendsGenericToExtendsActual2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("extendsGenericToExtendsActual2", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<List<? extends String>>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<List<? extends String>>
+    assertEquals(
+        new TypeCapture<List<List<? extends String>>>() {}.capture(),
+        param0Type);
+
+    // String
+    assertEquals(
+        String.class,
+        returnType);
+
+    extendsGenericToExtendsActual2((List<List<? extends String>>) null);
+  }
+
+  public static <T> T extendsGenericToExtendsActual2(List<List<? extends T>> a) { return null; }
+
+  @Test
+  public void superGenericToSuperActual() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("superGenericToSuperActual", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? super String>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // FIXME: This is resolving to the wrong type.
+    // List<? super ? super String>
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            Types.supertypeOf(Types.supertypeOf(String.class))),
+        param0Type);
+
+    // ? super String
+    assertEquals(
+        Types.supertypeOf(String.class),
+        returnType);
+
+    superGenericToSuperActual((List<? super String>) null);
+  }
+
+  public static <T> T superGenericToSuperActual(List<? super T> a) { return null; }
+
+  @Test
+  public void superGenericToExtendsActual() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("superGenericToExtendsActual", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends String>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    // cannot infer type-variable T
+    // argument mismatch  List<capture of ? extends String> cannot be converted to List<? super T>
+    //superGenericToExtendsActual((List<? extends String>) null);
+  }
+
+  public static <T> T superGenericToExtendsActual(List<? super T> a) { return null; }
 }
