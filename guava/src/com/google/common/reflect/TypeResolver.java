@@ -33,8 +33,9 @@ import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
 import java.lang.reflect.WildcardType;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -575,10 +576,11 @@ public final class TypeResolver {
     /**
      * Adds the constraint that the specified type is equal to this type variable's type.
      *
+     * @return {@code true} if this instance was modified as a result of the call
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    void setExactType(Type type) {
+    boolean setExactType(Type type) {
       checkNotNull(type);
       checkNotMappedToSelf(type);
       checkExactTypeAndRelatedTypes(type, relatedTypes);
@@ -586,7 +588,7 @@ public final class TypeResolver {
       checkExactTypeAndSubtypes(type, subtypes);
       if (exactType == null) {
         exactType = type;
-        return;
+        return true;
       }
       checkArgument(
           exactType.equals(type),
@@ -594,16 +596,18 @@ public final class TypeResolver {
           key,
           exactType.getTypeName(),
           type.getTypeName());
+      return false;
     }
 
     /**
      * Adds the constraint that the specified type is related to this type variable's type.  Two
      * types are related when it is possible for a third type to subtype both of those two types.
      *
+     * @return {@code true} if this instance was modified as a result of the call
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    void addRelatedType(Type relatedType) {
+    boolean addRelatedType(Type relatedType) {
       checkNotNull(relatedType);
       checkNotMappedToSelf(relatedType);
       // No need to re-check the other bounds.
@@ -625,16 +629,17 @@ public final class TypeResolver {
       if (relatedTypes == null) {
         relatedTypes = new LinkedHashSet<>();
       }
-      relatedTypes.add(relatedType);
+      return relatedTypes.add(relatedType);
     }
 
     /**
      * Adds the constraint that the specified type is a supertype of this type variable's type.
      *
+     * @return {@code true} if this instance was modified as a result of the call
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    void addSupertype(Type supertype) {
+    boolean addSupertype(Type supertype) {
       checkNotNull(supertype);
       checkNotMappedToSelf(supertype);
       // No need to re-check the other bounds.
@@ -655,16 +660,17 @@ public final class TypeResolver {
       if (supertypes == null) {
         supertypes = new LinkedHashSet<>();
       }
-      supertypes.add(supertype);
+      return supertypes.add(supertype);
     }
 
     /**
      * Adds the constraint that the specified type is a subtype of this type variable's type.
      *
+     * @return {@code true} if this instance was modified as a result of the call
      * @throws IllegalArgumentException if this new constraint is incompatible with existing
      *         constraints
      */
-    void addSubtype(Type subtype) {
+    boolean addSubtype(Type subtype) {
       checkNotNull(subtype);
       checkNotMappedToSelf(subtype);
       // No need to re-check the other bounds.
@@ -675,7 +681,7 @@ public final class TypeResolver {
       if (subtypes == null) {
         subtypes = new LinkedHashSet<>();
       }
-      subtypes.add(subtype);
+      return subtypes.add(subtype);
     }
 
     /**
@@ -872,7 +878,7 @@ public final class TypeResolver {
     }
 
     /**
-     * Returns a type that is a supertype of all of the specified types.
+     * Returns a type that is a supertype of all {@link #subtypes}.
      *
      * <p>See <a href="https://docs.oracle.com/javase/specs/jls/se13/html/jls-4.html#jls-4.10.4"
      * >Least Upper Bound</a>.
@@ -967,12 +973,12 @@ public final class TypeResolver {
    * those type variables.
    */
   private static final class TypeMappings {
-    private final Map<TypeVariableKey, TypeVariableConstraints> map = new LinkedHashMap<>();
+    private final Map<TypeVariableKey, TypeVariableConstraints> map = new HashMap<>();
 
     /**
      * Used to prevent infinite recursion in least upper bound (lub) computation.
      */
-    private final Set<Type> lubTypes = new LinkedHashSet<>();
+    private final Set<Type> lubTypes = new HashSet<>();
 
     @Override
     public String toString() {
@@ -993,10 +999,11 @@ public final class TypeResolver {
      * Adds the specified mapping to this instance.
      *
      * @param key the type variable
-     * @param value the type to associated with the type variable
+     * @param value the type to associate with the type variable
      * @param relationship the relationship between the type variable and the specified type
+     * @return {@code true} if this instance was modified as a result of the call
      */
-    void put(TypeVariableKey key, Type value, TypeRelationship relationship) {
+    boolean put(TypeVariableKey key, Type value, TypeRelationship relationship) {
       checkNotNull(key);
       checkNotNull(value);
       checkNotNull(relationship);
@@ -1007,17 +1014,13 @@ public final class TypeResolver {
       }
       switch (relationship) {
         case EQUAL:
-          constraints.setExactType(value);
-          return;
+          return constraints.setExactType(value);
         case RELATED:
-          constraints.addRelatedType(value);
-          return;
+          return constraints.addRelatedType(value);
         case SUPERTYPE:
-          constraints.addSupertype(value);
-          return;
+          return constraints.addSupertype(value);
         case SUBTYPE:
-          constraints.addSubtype(value);
-          return;
+          return constraints.addSubtype(value);
       }
       throw new AssertionError("Unknown type relationship: " + relationship);
     }
@@ -1070,18 +1073,14 @@ public final class TypeResolver {
 
   private static final class TypeMappingsBuilder {
     final TypeMappings mappings = new TypeMappings();
-    private final Set<Seen> seen = new LinkedHashSet<>();
     boolean isForLeastUpperBound;
 
     void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
-      //System.out.println(actual.getTypeName() + " is " + relationship + " to " + formal.getTypeName());
+      //System.out.println(from.getTypeName() + " is " + relationship + " to " + to.getTypeName());
       checkNotNull(from);
       checkNotNull(to);
       checkNotNull(relationship);
       if (from.equals(to)) {
-        return;
-      }
-      if (!seen.add(new Seen(from, to, relationship))) {
         return;
       }
       if (from instanceof TypeVariable) {
@@ -1102,7 +1101,9 @@ public final class TypeResolver {
     private void visitTypeVariable(
         TypeVariable<?> typeVariable, Type to, TypeRelationship relationship) {
       TypeVariableKey key = new TypeVariableKey(typeVariable);
-      mappings.put(key, to, relationship);
+      if (!mappings.put(key, to, relationship)) {
+        return;
+      }
       for (Type bound : typeVariable.getBounds()) {
         if (bound instanceof Class) {
           // The Object.class bound is redundant, and it causes problems when binding T[] to int[].
@@ -1198,8 +1199,7 @@ public final class TypeResolver {
       for (int i = 0; i < fromArgs.length; i++) {
         Type fromArg = fromArgs[i];
         Type toArg = toArgs[i];
-        // FIXME: These two checks are incompatible with existing behavior.
-        //        Such as this:
+        // FIXME: These two checks are incompatible with preexisting behavior such as this:
         //        https://github.com/google/guava/commit/7a3389afb9f97fe846c69e46d106ac1dbf59f51d
         //        But they seem important when resolving method type parameters from arguments.
         //        Add `boolean isForMethodArgument` flag to enable these checks,
@@ -1311,17 +1311,14 @@ public final class TypeResolver {
           // from=U
           // to=Number
           // relationship=SUPERTYPE
-          // "Number is something that is a supertype of U"
           // "Number is a supertype of U"
           // "U extends Number"
           //
-          // formalBound=T
+          // bound=T
           // "U extends T"
-          // "U is a subtype of T"
           // "T is a supertype of U"
           // anything we can conclude about T w.r.t Number?
           // it can't be totally unrelated to Number, right?
-          // it has to be either a supertype of Number or a subtype of Number?
           //   T=Integer works, T=Object works?, T=String doesn't work, right?
           //         yes              yes          right
           // so T is RELATED to Number
@@ -1333,7 +1330,8 @@ public final class TypeResolver {
           // from=A
           // to=Number
           // relationship=RELATED
-          // "A extends Number or Number extends A"
+          // "a type may extend both A and Number"
+          // "A intersects Number"
           //
           // bound=B
           // A extends B
@@ -1349,35 +1347,6 @@ public final class TypeResolver {
       }
       throw new AssertionError("Unknown type relationship: " + relationship);
     }
-
-    private static final class Seen {
-      private final Type from;
-      private final Type to;
-      private final TypeRelationship relationship;
-
-      Seen(Type from, Type to, TypeRelationship relationship) {
-        this.from = checkNotNull(from);
-        this.to = checkNotNull(to);
-        this.relationship = checkNotNull(relationship);
-      }
-
-      @Override
-      public boolean equals(@Nullable Object object) {
-        if (object instanceof Seen) {
-          Seen that = (Seen) object;
-          return this.from.equals(that.from)
-              && this.to.equals(that.to)
-              && this.relationship.equals(that.relationship);
-        } else {
-          return false;
-        }
-      }
-
-      @Override
-      public int hashCode() {
-        return Objects.hashCode(from, to, relationship);
-      }
-    }
   }
 
   /**
@@ -1392,14 +1361,14 @@ public final class TypeResolver {
     if (types.size() == 1) {
       return types.iterator().next();
     }
-    Type[] bounds = types.toArray(new Type[0]);
-    return new Types.WildcardTypeImpl(bounds, bounds);
+    return new Types.WildcardTypeImpl(new Type[0], types.toArray(new Type[0]));
   }
 
   /**
    * Returns {@code true} if it is possible for any type to be a subtype of both {@code a} and
    * {@code b}.
    */
+  // TODO: Mention that `final` isn't considered, probably rename this method.
   private static boolean isPossibleToSubtypeBoth(Type a, Type b) {
     checkNotNull(a);
     checkNotNull(b);
@@ -1435,16 +1404,16 @@ public final class TypeResolver {
    */
   private static Set<Type> getGenericSupertypes(Type type) {
     checkNotNull(type);
-    Set<Type> genericSupertypes = new LinkedHashSet<>();
+    ImmutableSet.Builder<Type> builder = ImmutableSet.builder();
     for (Class<?> rawType : getRawTypes(type)) {
       Type genericType = getGenericType(rawType);
-      genericSupertypes.add(genericType);
+      builder.add(genericType);
     }
     Type componentType = Types.getComponentType(type);
     if (componentType != null && !isPrimitive(componentType)) {
-      genericSupertypes.add(GenericArrayTypeHolder.GENERIC_ARRAY_TYPE);
+      builder.add(GenericArrayTypeHolder.GENERIC_ARRAY_TYPE);
     }
-    return genericSupertypes;
+    return builder.build();
   }
 
   private static final class GenericArrayTypeHolder {
@@ -1455,7 +1424,7 @@ public final class TypeResolver {
       try {
         method = GenericArrayTypeHolder.class.getDeclaredMethod("genericArray");
       } catch (NoSuchMethodException e) {
-        throw new LinkageError("", e);
+        throw new LinkageError(e.getMessage(), e);
       }
       GENERIC_ARRAY_TYPE = method.getGenericReturnType();
     }
