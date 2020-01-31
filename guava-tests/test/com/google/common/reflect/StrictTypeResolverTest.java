@@ -1954,11 +1954,13 @@ public final class StrictTypeResolverTest {
       new TypeResolver()
           .where(
               method.getGenericParameterTypes()[0],
-              new TypeCapture<List<? super List<Number>>>() {}.capture());
+              new TypeCapture<List<? super List<Integer>>>() {}.capture());
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    //parameterizedTypeToWildcard((List<? super List<Number>>) null);
+    // Note: this is an instance of a wildcard capture with lower bounds.
+    // no instance of T exists such that capture of ? super List<Integer> conforms to Collection<T>
+    //parameterizedTypeToWildcard((List<? super List<Integer>>) null);
   }
 
   @Test
@@ -1969,13 +1971,10 @@ public final class StrictTypeResolverTest {
       new TypeResolver()
           .where(
               method.getGenericParameterTypes()[0],
-              new TypeCapture<List<? super List<Integer>>>() {}.capture());
+              new TypeCapture<List<?>>() {}.capture());
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    // Note: this is an instance of a wildcard capture with lower bounds.
-    // no instance of T exists such that capture of ? super List<Integer> conforms to Collection<T>
-    //parameterizedTypeToWildcard((List<? super List<Integer>>) null);
     //parameterizedTypeToWildcard((List<?>) null);
   }
 
