@@ -15,7 +15,6 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Field;
 import java.lang.reflect.Member;
 import java.lang.reflect.Method;
-import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -113,12 +112,8 @@ public final class StrictTypeResolverTest {
         new TypeCapture<Class<TimeUnit>>() {}.capture(),
         param0Type);
 
-    assertEquals(
-        Types.newParameterizedType(
-            EnumMap.class,
-            TimeUnit.class,
-            method.getTypeParameters()[1]),
-        returnType);
+    // EnumMap<TimeUnit, V>
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<EnumMap<TimeUnit, ?>>() {}.capture()));
   }
 
   @Test
@@ -646,28 +641,29 @@ public final class StrictTypeResolverTest {
                 method.getGenericParameterTypes()[1],
                 new TypeCapture<List<Integer>>() {}.capture());
 
-    // In later versions of Java, String and Integer share more interfaces than
-    // Serializable and Comparable.
-    Type expectedParamType =
-        Types.newParameterizedType(
-            List.class,
-            new Types.WildcardTypeImpl(
-                new Type[0],
-                new Type[] {
-                    Serializable.class,
-                    Types.newParameterizedType(
-                        Comparable.class,
-                        Types.subtypeOf(Object.class))
-                }));
-
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    assertTrue(TypeToken.of(param0Type).isSubtypeOf(expectedParamType));
-    assertTrue(TypeToken.of(param1Type).isSubtypeOf(expectedParamType));
+    // List<? extends Serializable & Comparable<? extends Serializable & Comparable<?>>>
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends Serializable>>() {}.capture()));
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<?>>>() {}.capture()));
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Serializable>>>() {}.capture()));
+    assertTrue(TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+
+    // List<? extends Serializable & Comparable<? extends Serializable & Comparable<?>>>
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Serializable>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<?>>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Serializable>>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+
+    // Serializable & Comparable<? extends Serializable & Comparable<?>>
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Serializable.class));
-    assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<?>>() {}.capture()));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Serializable>>() {}.capture()));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Comparable<?>>>() {}.capture()));
 
     convergeUpperBounds(new ArrayList<String>(), new ArrayList<Integer>());
   }
@@ -1222,25 +1218,22 @@ public final class StrictTypeResolverTest {
     Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    Type expectedParam1Type =
-        Types.newParameterizedType(
-            List.class,
-            new Types.WildcardTypeImpl(
-                new Type[0],
-                new Type[] {
-                    Number.class,
-                    Types.newParameterizedType(
-                        Comparable.class,
-                        Types.subtypeOf(Object.class))
-                }));
-
     assertEquals(
         new TypeCapture<List<? extends Integer>>() {}.capture(),
         param0Type);
 
-    assertTrue(TypeToken.of(param1Type).isSubtypeOf(expectedParam1Type));
+    // List<? extends Number & Comparable<? extends Number & Comparable<?>>>
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Number>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<?>>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Number>>>() {}.capture()));
+    assertTrue(TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Comparable<? extends Comparable<?>>>>() {}.capture()));
+
+    // Number & Comparable<? extends Number & Comparable<?>>
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Number.class));
-    assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<?>>() {}.capture()));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Number>>() {}.capture()));
+    assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Comparable<?>>>() {}.capture()));
 
     variableInBounds2(new ArrayList<Integer>(), new ArrayList<Double>());
   }
@@ -1584,24 +1577,14 @@ public final class StrictTypeResolverTest {
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     // List<? super AccessibleObject & Member>
-    assertTrue(param0Type instanceof ParameterizedType);
-    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
-    assertEquals(List.class, param0ParameterizedType.getRawType());
-    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param0TypeArgs.length);
-    Type param0TypeArg = param0TypeArgs[0];
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(AccessibleObject.class));
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(Member.class));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<AccessibleObject>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Member>>() {}.capture()));
 
     // List<? super AccessibleObject & Member>
-    assertTrue(param1Type instanceof ParameterizedType);
-    ParameterizedType param1ParameterizedType = (ParameterizedType) param1Type;
-    assertEquals(List.class, param1ParameterizedType.getRawType());
-    Type[] param1TypeArgs = param1ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param1TypeArgs.length);
-    Type param1TypeArg = param1TypeArgs[0];
-    assertTrue(param1TypeArg.getTypeName(), TypeToken.of(param1TypeArg).isSupertypeOf(AccessibleObject.class));
-    assertTrue(param1TypeArg.getTypeName(), TypeToken.of(param1TypeArg).isSupertypeOf(Member.class));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSupertypeOf(new TypeCapture<List<AccessibleObject>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSupertypeOf(new TypeCapture<List<Member>>() {}.capture()));
 
     assertEquals(
         Object.class,
@@ -1673,24 +1656,14 @@ public final class StrictTypeResolverTest {
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     // Consumer<? super AccessibleObject & Member>
-    assertTrue(param0Type instanceof ParameterizedType);
-    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
-    assertEquals(Consumer.class, param0ParameterizedType.getRawType());
-    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param0TypeArgs.length);
-    Type param0TypeArg = param0TypeArgs[0];
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(AccessibleObject.class));
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(Member.class));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<Consumer<?>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<Consumer<AccessibleObject>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<Consumer<Member>>() {}.capture()));
 
     // Consumer<? super AccessibleObject & Member>
-    assertTrue(param1Type instanceof ParameterizedType);
-    ParameterizedType param1ParameterizedType = (ParameterizedType) param1Type;
-    assertEquals(Consumer.class, param0ParameterizedType.getRawType());
-    Type[] param1TypeArgs = param1ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param1TypeArgs.length);
-    Type param1TypeArg = param1TypeArgs[0];
-    assertTrue(TypeToken.of(param1TypeArg).isSupertypeOf(AccessibleObject.class));
-    assertTrue(TypeToken.of(param1TypeArg).isSupertypeOf(Member.class));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<Consumer<?>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSupertypeOf(new TypeCapture<Consumer<AccessibleObject>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSupertypeOf(new TypeCapture<Consumer<Member>>() {}.capture()));
 
     // AccessibleObject & Member
     assertTrue(TypeToken.of(returnType).isSubtypeOf(AccessibleObject.class));
@@ -1730,20 +1703,17 @@ public final class StrictTypeResolverTest {
     Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    assertTrue(param0Type instanceof ParameterizedType);
-    assertEquals(List.class, ((ParameterizedType) param0Type).getRawType());
-    assertEquals(1, ((ParameterizedType) param0Type).getActualTypeArguments().length);
-    Type param0TypeArg = ((ParameterizedType) param0Type).getActualTypeArguments()[0];
-    assertTrue(TypeToken.of(param0TypeArg).isSubtypeOf(AccessibleObject.class));
-    assertTrue(TypeToken.of(param0TypeArg).isSubtypeOf(Member.class));
+    // List<? extends AccessibleObject & Member>
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends AccessibleObject>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<? extends Member>>() {}.capture()));
 
-    assertTrue(param1Type instanceof ParameterizedType);
-    assertEquals(List.class, ((ParameterizedType) param1Type).getRawType());
-    assertEquals(1, ((ParameterizedType) param1Type).getActualTypeArguments().length);
-    Type param1TypeArg = ((ParameterizedType) param1Type).getActualTypeArguments()[0];
-    assertTrue(TypeToken.of(param1TypeArg).isSubtypeOf(AccessibleObject.class));
-    assertTrue(TypeToken.of(param1TypeArg).isSubtypeOf(Member.class));
+    // List<? extends AccessibleObject & Member>
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends AccessibleObject>>() {}.capture()));
+    assertTrue(param1Type.getTypeName(), TypeToken.of(param1Type).isSubtypeOf(new TypeCapture<List<? extends Member>>() {}.capture()));
 
+    // AccessibleObject & Member
     assertTrue(TypeToken.of(returnType).isSubtypeOf(AccessibleObject.class));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Member.class));
 
@@ -1863,14 +1833,9 @@ public final class StrictTypeResolverTest {
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     // List<? super Serializable & Comparable<?>[]>
-    assertTrue(param0Type instanceof ParameterizedType);
-    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
-    assertEquals(List.class, param0ParameterizedType.getRawType());
-    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param0TypeArgs.length);
-    Type param0TypeArg = param0TypeArgs[0];
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Comparable<?>[]>() {}.capture()));
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Serializable[]>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Serializable[]>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Comparable<?>[]>>() {}.capture()));
 
     // Serializable & Comparable<?>
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Comparable.class));
@@ -1895,15 +1860,10 @@ public final class StrictTypeResolverTest {
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    // List<? super Serializable & capture of ? super Comparable<?>[]>
-    assertTrue(param0Type instanceof ParameterizedType);
-    ParameterizedType param0ParameterizedType = (ParameterizedType) param0Type;
-    assertEquals(List.class, param0ParameterizedType.getRawType());
-    Type[] param0TypeArgs = param0ParameterizedType.getActualTypeArguments();
-    assertEquals(1, param0TypeArgs.length);
-    Type param0TypeArg = param0TypeArgs[0];
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Comparable<?>[]>() {}.capture()));
-    assertTrue(param0TypeArg.getTypeName(), TypeToken.of(param0TypeArg).isSupertypeOf(new TypeCapture<Serializable[]>() {}.capture()));
+    // List<? super Serializable & capture of ? super Comparable<?>>
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSubtypeOf(new TypeCapture<List<?>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Serializable>>() {}.capture()));
+    assertTrue(param0Type.getTypeName(), TypeToken.of(param0Type).isSupertypeOf(new TypeCapture<List<Comparable<?>>>() {}.capture()));
 
     // Serializable & capture of ? super Comparable<?>[]
     assertTrue(returnType.getTypeName(), TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<?>[]>() {}.capture()));
