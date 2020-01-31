@@ -236,22 +236,16 @@ public class TypeResolverTest extends TestCase {
     }
   }
 
-  public <K, V> void disabled_testWhere_actualArgHasWildcard() {
+  public <K, V> void testWhere_actualArgHasWildcard() {
     TypeResolver resolver =
         new TypeResolver()
-            // TODO: Isn't this `where` invalid?
-            //       The analogous plain Java code doesn't compile.
             .where(
                 new TypeCapture<Iterable<Map<?, V>>>() {}.capture(),
                 new TypeCapture<Iterable<Map<String, Integer>>>() {}.capture());
     assertEquals(
         new TypeCapture<K>() {}.capture(), resolver.resolveType(new TypeCapture<K>() {}.capture()));
     assertEquals(Integer.class, resolver.resolveType(new TypeCapture<V>() {}.capture()));
-
-    //actualArgHasWildcard((Iterable<Map<String, Integer>>) null);
   }
-
-  static <V> void actualArgHasWildcard(Iterable<Map<?, V>> map) {}
 
   public <T> void testWhere_mapFromWildcard() {
     Type subtype = new TypeCapture<TypedKeyMap<T>>() {}.capture();
@@ -264,22 +258,16 @@ public class TypeResolverTest extends TestCase {
             .resolveType(subtype));
   }
 
-  public <T> void disabled_testWhere_mapFromWildcardToParameterized() {
+  public <T> void testWhere_mapFromWildcardToParameterized() {
     Type subtype = new TypeCapture<TypedListKeyMap<T>>() {}.capture();
     assertEquals(
         new TypeCapture<TypedListKeyMap<String>>() {}.capture(),
         new TypeResolver()
-            // TODO: Isn't this `where` invalid?
-            //       The analogous plain Java code doesn't compile.
             .where(
                 new TypeCapture<Map<List<Integer>, T>>() {}.capture(),
                 new TypeCapture<Map<?, String>>() {}.capture())
             .resolveType(subtype));
-
-    //mapFromWildcardToParameterized((Map<?, String>) null);
   }
-
-  static <T> void mapFromWildcardToParameterized(Map<List<Integer>, T> map) {}
 
   public <T> void testWhere_mapFromBoundedWildcard() {
     Type subtype = new TypeCapture<TypedKeyMap<T>>() {}.capture();
