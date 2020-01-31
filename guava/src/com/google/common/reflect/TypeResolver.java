@@ -1198,6 +1198,12 @@ public final class TypeResolver {
       for (int i = 0; i < fromArgs.length; i++) {
         Type fromArg = fromArgs[i];
         Type toArg = toArgs[i];
+        // FIXME: These two checks are incompatible with existing behavior.
+        //        Such as this:
+        //        https://github.com/google/guava/commit/7a3389afb9f97fe846c69e46d106ac1dbf59f51d
+        //        But they seem important when resolving method type parameters from arguments.
+        //        Add `boolean isForMethodArgument` flag to enable these checks,
+        //        and set that flag to true when the caller is TypeToken.method(...)?
         if (fromArg instanceof WildcardType) {
           checkArgument(
               toArg instanceof WildcardType
