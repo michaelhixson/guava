@@ -1134,8 +1134,8 @@ public final class TypeResolver {
       WildcardType toWildcardType = (WildcardType) to;
       Type[] toLowerBounds = toWildcardType.getLowerBounds();
       Type[] toUpperBounds = toWildcardType.getUpperBounds();
-      if ((fromLowerBounds.length == 0 && toLowerBounds.length > 0)
-          || (fromLowerBounds.length > 0 && toLowerBounds.length == 0)) {
+      if (fromLowerBounds.length != toLowerBounds.length
+          || fromUpperBounds.length != toUpperBounds.length) {
         for (Type fromLowerBound : fromLowerBounds) {
           populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
         }
