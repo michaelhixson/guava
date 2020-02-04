@@ -1001,6 +1001,7 @@ public final class TypeResolver {
       checkNotNull(key);
       checkNotNull(value);
       checkNotNull(relationship);
+      //System.out.println("put " + key + " " + value + " " + relationship);
       TypeVariableConstraints constraints = map.get(key);
       if (constraints == null) {
         constraints = new TypeVariableConstraints(key);
@@ -1070,7 +1071,7 @@ public final class TypeResolver {
     boolean isForLeastUpperBound;
 
     void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
-      //System.out.println("from " from.getTypeName() + " to " + to.getTypeName() + " as " + relationship);
+      //System.out.println("set " + from.getTypeName() + " " + to.getTypeName() + " " + relationship);
       checkNotNull(from);
       checkNotNull(to);
       checkNotNull(relationship);
