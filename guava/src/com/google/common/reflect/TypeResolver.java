@@ -1363,7 +1363,7 @@ public final class TypeResolver {
     if (types.size() == 1) {
       return types.iterator().next();
     }
-    if (false) {
+    if (true) {
       // TODO: This is generally preferred, but it runs into issues with our wildcard-to-wildcard
       //       TypeMappingsBuilder implementation.  That implementation has other issues, so once we
       //       fix those, try re-enabling this block again and see if things work.
