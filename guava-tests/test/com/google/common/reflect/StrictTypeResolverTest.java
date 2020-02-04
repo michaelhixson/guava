@@ -1255,7 +1255,8 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    //variableInBounds3(new ArrayList<Number>(), new ArrayList<String>());
+    // inference variable U has incompatible upper bounds Object, String, Number, T.
+    //variableInBounds3((List<Number>) null, (List<String>) null);
   }
 
   public static <T, U extends T> T variableInBounds3(List<? super U> a, List<? super T> b) { return null; }
@@ -1457,11 +1458,15 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<? super Object>>() {}.capture(),
         returnType);
 
+    nestedWildcardLowerBounds((List<Number>) null);
+
     assertEquals(
         new TypeCapture<List<? super Object>>() {}.capture(),
         resolver.where(method.getGenericReturnType(),
                        new TypeCapture<List<? super Object>>() {}.capture())
                 .resolveType(method.getGenericReturnType()));
+
+    List<? super Object> o = nestedWildcardLowerBounds((List<Number>) null);
 
     assertEquals(
         new TypeCapture<List<? super Serializable>>() {}.capture(),
@@ -1469,11 +1474,15 @@ public final class StrictTypeResolverTest {
                        new TypeCapture<List<? super Serializable>>() {}.capture())
                 .resolveType(method.getGenericReturnType()));
 
+    List<? super Serializable> t = nestedWildcardLowerBounds((List<Number>) null);
+
     assertEquals(
         new TypeCapture<List<? super Number>>() {}.capture(),
         resolver.where(method.getGenericReturnType(),
                        new TypeCapture<List<? super Number>>() {}.capture())
                 .resolveType(method.getGenericReturnType()));
+
+    List<? super Number> u = nestedWildcardLowerBounds((List<Number>) null);
 
     assertEquals(
         new TypeCapture<List<? super Integer>>() {}.capture(),
@@ -1481,20 +1490,44 @@ public final class StrictTypeResolverTest {
                        new TypeCapture<List<? super Integer>>() {}.capture())
                 .resolveType(method.getGenericReturnType()));
 
+    List<? super Integer> v = nestedWildcardLowerBounds((List<Number>) null);
+
     assertEquals(
         new TypeCapture<List<? super CharSequence>>() {}.capture(),
         resolver.where(method.getGenericReturnType(),
                        new TypeCapture<List<? super CharSequence>>() {}.capture())
                 .resolveType(method.getGenericReturnType()));
 
-    try {
-      resolver.where(method.getGenericReturnType(),
-                     new TypeCapture<List<? super String>>() {}.capture())
-              .resolveType(method.getGenericReturnType());
-      fail();
-    } catch (IllegalArgumentException expected) {}
+    List<? super CharSequence> q = nestedWildcardLowerBounds((List<Number>) null);
 
-    nestedWildcardLowerBounds(new ArrayList<Number>());
+    // FIXME: This one throws, but it shouldn't.
+    assertEquals(
+        new TypeCapture<List<? super String>>() {}.capture(),
+        resolver.where(method.getGenericReturnType(),
+                       new TypeCapture<List<? super String>>() {}.capture())
+                .resolveType(method.getGenericReturnType()));
+
+    // IntelliJ thinks this does not compile, but it does.
+    //List<? super String> r = nestedWildcardLowerBounds((List<Number>) null);
+
+    // Number is a supertype of U
+    // T is a supertype of U
+    // ----> seems to imply that Number and T are intersecting
+    // so then
+    // List<? super T> == List<? super String>
+    // "a supertype of T == a supertype of String"
+    // should NOT imply that T is a subtype of String,
+    // but somehow our TypeResolver thinks it is implying that.
+    // It's this chain of inferences where it goes wrong:
+    //   set java.util.List<? super T> java.util.List<? super java.lang.String> SUBTYPE
+    //   set ? super T ? super java.lang.String EQUAL
+    //   set T java.lang.String SUPERTYPE
+    // but if we make it avoid going down that path, then an earlier assertion fails
+    // where we're trying to set the return type to List<? super Object>
+    // and it goes:
+    //   set java.util.List<? super T> java.util.List<? super java.lang.Object> SUBTYPE
+    //   set ? super T ? super java.lang.Object EQUAL
+    //   set T ? super java.lang.Object SUPERTYPE
   }
 
   public static <T, U extends T> List<? super T> nestedWildcardLowerBounds(List<? super U> a) { return null; }
@@ -1786,8 +1819,7 @@ public final class StrictTypeResolverTest {
         Number.class,
         returnType);
 
-    List<? extends Number[]> list = null;
-    array(list);
+    array((List<? extends Number[]>) null);
   }
 
   @Test
@@ -1802,9 +1834,8 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    List<? extends Number[]> list = null;
     // IntelliJ doesn't catch this one:
-    //arraySuper(list);
+    //arraySuper((List<? extends Number[]>) null);
   }
 
   @Test
@@ -2675,7 +2706,23 @@ public final class StrictTypeResolverTest {
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    // FIXME: This is resolving to the wrong type.
+    // FIXME: This parameter is resolving to the wrong type.
+    // Note that intellij says the parameter resolves to List<? extends ? extends String>,
+    // but javac says this:
+    /*
+
+example\Test.java:24: Note: Deferred instantiation of method <T>extendsGenericToExtendsActual(List<? extends T>)
+    extendsGenericToExtendsActual((List<? extends String>) null);
+                                 ^
+  instantiated signature: (List<? extends CAP#1>)CAP#1
+  target-type: <none>
+  where T is a type-variable:
+    T extends Object declared in method <T>extendsGenericToExtendsActual(List<? extends T>)
+  where CAP#1 is a fresh type-variable:
+    CAP#1 extends String from capture of ? extends String
+
+     */
+
     // List<? extends ? extends String>
     assertEquals(
         Types.newParameterizedType(
@@ -2739,6 +2786,21 @@ public final class StrictTypeResolverTest {
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     // FIXME: This is resolving to the wrong type.
+    // Note that javac mentions wildcard capture.
+    /*
+
+example\Test.java:29: Note: Deferred instantiation of method <T>superGenericToSuperActual(List<? super T>)
+    superGenericToSuperActual((List<? super String>) null);
+                             ^
+  instantiated signature: (List<? super CAP#1>)CAP#1
+  target-type: <none>
+  where T is a type-variable:
+    T extends Object declared in method <T>superGenericToSuperActual(List<? super T>)
+  where CAP#1 is a fresh type-variable:
+    CAP#1 extends Object super: String from capture of ? super String
+
+     */
+
     // List<? super ? super String>
     assertEquals(
         Types.newParameterizedType(
