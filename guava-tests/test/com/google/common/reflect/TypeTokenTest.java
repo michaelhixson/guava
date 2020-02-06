@@ -1461,6 +1461,7 @@ public class TypeTokenTest extends TestCase {
 
   public void testWhere() {
     assertEquals(new TypeToken<Map<String, Integer>>() {}, mapOf(String.class, Integer.class));
+    // TODO: Aren't these assertions wrong, given that they are trying to map T[] to int[]?
     assertEquals(new TypeToken<int[]>() {}, arrayOf(int.class));
     assertEquals(int[].class, arrayOf(int.class).getRawType());
   }

@@ -561,7 +561,7 @@ public final class TypeResolver {
         return leastUpperBound(mappings);
       }
       if (supertypes != null) {
-        return greatestLowerBound();
+        return greatestLowerBound(mappings);
       }
       return Object.class;
     }
@@ -612,7 +612,7 @@ public final class TypeResolver {
         for (Type existingIntersectingType : intersectingTypes) {
           // TODO: Write a test that throws here.
           checkArgument(
-              intersecting(existingIntersectingType, intersectingType),
+              intersectingOrUndetermined(existingIntersectingType, intersectingType),
               "Type %s must intersect %s, so it cannot intersect %s",
               key,
               existingIntersectingType.getTypeName(),
@@ -643,7 +643,7 @@ public final class TypeResolver {
       if (supertypes != null) {
         for (Type existingSupertype : supertypes) {
           checkArgument(
-              intersecting(existingSupertype, supertype),
+              intersectingOrUndetermined(existingSupertype, supertype),
               "Type %s must be a subtype of %s, so it cannot be a subtype of %s",
               key,
               existingSupertype.getTypeName(),
@@ -695,6 +695,16 @@ public final class TypeResolver {
       }
       if (constraints.supertypes != null) {
         for (Type supertype : constraints.supertypes) {
+          // This feels like a hack and is probably wrong.  If it later turns out that this block
+          // causes tests to fail, then don't feel bad about deleting this.
+          if (!isEmpty()
+              && supertype instanceof WildcardType
+              && ((WildcardType) supertype).getLowerBounds().length > 0) {
+            for (Type lowerBound : ((WildcardType) supertype).getLowerBounds()) {
+              addSupertype(lowerBound);
+            }
+            continue;
+          }
           addSupertype(supertype);
         }
       }
@@ -703,6 +713,13 @@ public final class TypeResolver {
           addSubtype(subtype);
         }
       }
+    }
+
+    private boolean isEmpty() {
+      return exactType == null
+          && intersectingTypes == null
+          && subtypes == null
+          && supertypes == null;
     }
 
     /**
@@ -727,7 +744,7 @@ public final class TypeResolver {
       }
       for (Type intersectingType : intersectingTypes) {
         checkArgument(
-            intersecting(exactType, intersectingType),
+            intersectingOrUndetermined(exactType, intersectingType),
             "No type can satisfy the constraints of %s, "
                 + "which must be equal to %s and intersect %s",
             key,
@@ -748,7 +765,7 @@ public final class TypeResolver {
       }
       for (Type supertype : supertypes) {
         checkArgument(
-            isSubtype(exactType, supertype),
+            isSubtypeOrUndetermined(exactType, supertype),
             "No type can satisfy the constraints of %s, "
                 + "which must be equal to %s and a subtype of %s",
             key,
@@ -769,7 +786,7 @@ public final class TypeResolver {
       }
       for (Type subtype : subtypes) {
         checkArgument(
-            isSubtype(subtype, exactType),
+            isSubtypeOrUndetermined(subtype, exactType),
             "No type can satisfy the constraints of %s, "
                 + "which must be equal to %s and a supertype of %s",
             key,
@@ -791,7 +808,7 @@ public final class TypeResolver {
       for (Type intersectingType : intersectingTypes) {
         for (Type supertype : supertypes) {
           checkArgument(
-              intersecting(intersectingType, supertype),
+              intersectingOrUndetermined(intersectingType, supertype),
               "No type can satisfy the constraints of %s, "
                   + "which must intersect %s and be a subtype of %s",
               key,
@@ -814,7 +831,7 @@ public final class TypeResolver {
       for (Type intersectingType : intersectingTypes) {
         for (Type subtype : subtypes) {
           checkArgument(
-              intersecting(intersectingType, subtype),
+              intersectingOrUndetermined(intersectingType, subtype),
               "No type can satisfy the constraints of %s, "
                   + "which must intersect %s and be a supertype of %s",
               key,
@@ -837,8 +854,7 @@ public final class TypeResolver {
       for (Type supertype : supertypes) {
         for (Type subtype : subtypes) {
           checkArgument(
-              isSubtype(subtype, supertype),
-              //intersecting(subtype, supertype),
+              isSubtypeOrUndetermined(subtype, supertype),
               "No type can satisfy the constraints of %s, "
                   + "which must be a subtype of %s and a supertype of %s",
               key,
@@ -853,8 +869,14 @@ public final class TypeResolver {
      *
      * @throws IllegalStateException if this type variable has no known supertypes
      */
-    private Type greatestLowerBound() {
+    private Type greatestLowerBound(TypeMappings mappings) {
       checkState(supertypes != null && !supertypes.isEmpty());
+      TypeResolver resolver = new TypeResolver().where(mappings);
+      Set<Type> supertypes =
+          new LinkedHashSet<>(
+              Arrays.asList(
+                  resolver.resolveTypes(
+                      this.supertypes.toArray(new Type[0]))));
       if (supertypes.size() == 1) {
         return supertypes.iterator().next();
       }
@@ -989,6 +1011,11 @@ public final class TypeResolver {
       return (constraints == null) ? null : constraints.resolve(this);
     }
 
+    boolean containsKey(TypeVariable<?> typeVariable) {
+      checkNotNull(typeVariable);
+      return map.containsKey(new TypeVariableKey(typeVariable));
+    }
+
     /**
      * Adds the specified mapping to this instance.
      *
@@ -1001,7 +1028,7 @@ public final class TypeResolver {
       checkNotNull(key);
       checkNotNull(value);
       checkNotNull(relationship);
-      //System.out.println("put " + key + " " + value + " " + relationship);
+      //System.out.println("put (" + key + ") (" + value.getTypeName() + ") " + relationship);
       TypeVariableConstraints constraints = map.get(key);
       if (constraints == null) {
         constraints = new TypeVariableConstraints(key);
@@ -1071,7 +1098,11 @@ public final class TypeResolver {
     boolean isForLeastUpperBound;
 
     void populateTypeMappings(Type from, Type to, TypeRelationship relationship) {
-      //System.out.println("set " + from.getTypeName() + " " + to.getTypeName() + " " + relationship);
+      populateTypeMappings(from, to, relationship, null);
+    }
+
+    void populateTypeMappings(Type from, Type to, TypeRelationship relationship, @Nullable TypeRelationship parentRelationship) {
+      //System.out.println("set (" + from.getTypeName() + ") (" + to.getTypeName() + ") " + relationship + (parentRelationship == null ? "" : " " + parentRelationship));
       checkNotNull(from);
       checkNotNull(to);
       checkNotNull(relationship);
@@ -1081,7 +1112,7 @@ public final class TypeResolver {
       if (from instanceof TypeVariable) {
         visitTypeVariable((TypeVariable<?>) from, to, relationship);
       } else if (from instanceof WildcardType) {
-        visitWildcardType((WildcardType) from, to, relationship);
+        visitWildcardType((WildcardType) from, to, relationship, parentRelationship);
       } else if (from instanceof ParameterizedType) {
         visitParameterizedType((ParameterizedType) from, to, relationship);
       } else if (from instanceof GenericArrayType) {
@@ -1100,59 +1131,63 @@ public final class TypeResolver {
         return;
       }
       for (Type bound : typeVariable.getBounds()) {
-        if (bound instanceof Class) {
-          // The Object.class bound is redundant, and it causes problems when binding T[] to int[].
-          if (!bound.equals(Object.class)) {
-            mappings.put(key, bound, TypeRelationship.SUPERTYPE);
-          }
-        } else {
-          TypeRelationship boundRelationship = relationshipForBound(relationship);
-          if (bound instanceof TypeVariable
-              || !boundRelationship.equals(TypeRelationship.INTERSECTING)) {
-            populateTypeMappings(bound, to, boundRelationship);
-          }
+        if (!bound.equals(Object.class)) {
+          // The Object.class bound causes problems when binding T[] to int[].  That *should* cause
+          // problems -- that mapping is invalid -- but mappings like that were allowed in previous
+          // versions, so we allow it here for compatibility.
+          // TODO: Figure out if we want to support that legacy behavior even though it's wrong.
+          mappings.put(key, bound, TypeRelationship.SUPERTYPE);
+        }
+        TypeRelationship boundRelationship = relationshipForBound(relationship);
+        if (bound instanceof TypeVariable
+            || (!(bound instanceof Class) && !boundRelationship.equals(TypeRelationship.INTERSECTING))) {
+          populateTypeMappings(bound, to, boundRelationship);
         }
       }
     }
 
     private void visitWildcardType(
-        WildcardType fromWildcardType, Type to, TypeRelationship relationship) {
-      Type[] fromLowerBounds = fromWildcardType.getLowerBounds();
-      Type[] fromUpperBounds = fromWildcardType.getUpperBounds();
-      if (!(to instanceof WildcardType)) {
-        for (Type fromLowerBound : fromLowerBounds) {
-          if (!(fromLowerBound instanceof Class)) {
-            populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
+        WildcardType fromWildcardType, Type to, TypeRelationship relationship, @Nullable TypeRelationship parentRelationship) {
+      for (Type fromLowerBound : fromWildcardType.getLowerBounds()) {
+        if (fromLowerBound instanceof Class) {
+          checkArgument(
+              isSubtype(to, fromLowerBound),
+              "Lower bound %s of wildcard type %s is incompatible with %s",
+              fromLowerBound.getTypeName(),
+              fromWildcardType.getTypeName(),
+              to.getTypeName());
+        } else if (fromLowerBound instanceof TypeVariable
+            && Objects.equal(parentRelationship, TypeRelationship.EQUAL)
+            && to instanceof WildcardType
+            && ((WildcardType) to).getLowerBounds().length > 0) {
+          TypeVariable<?> fromTypeVariable = (TypeVariable<?>) fromLowerBound;
+          WildcardType toWildcardType = (WildcardType) to;
+          for (Type toLowerBound : toWildcardType.getLowerBounds()) {
+            populateTypeMappings(fromTypeVariable, toLowerBound, TypeRelationship.SUPERTYPE);
           }
-        }
-        for (Type fromUpperBound : fromUpperBounds) {
-          if (!(fromUpperBound instanceof Class)) {
-            populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
-          }
-        }
-        return;
-      }
-      WildcardType toWildcardType = (WildcardType) to;
-      Type[] toLowerBounds = toWildcardType.getLowerBounds();
-      Type[] toUpperBounds = toWildcardType.getUpperBounds();
-      if (fromLowerBounds.length != toLowerBounds.length
-          || fromUpperBounds.length != toUpperBounds.length) {
-        for (Type fromLowerBound : fromLowerBounds) {
+        } else {
           populateTypeMappings(fromLowerBound, to, TypeRelationship.SUPERTYPE);
         }
-        for (Type fromUpperBound : fromUpperBounds) {
+      }
+      for (Type fromUpperBound : fromWildcardType.getUpperBounds()) {
+        if (fromUpperBound instanceof Class) {
+          checkArgument(
+              isSubtype(to, fromUpperBound),
+              "Upper bound %s of wildcard type %s is incompatible with %s",
+              fromUpperBound.getTypeName(),
+              fromWildcardType.getTypeName(),
+              to.getTypeName());
+        } else if (fromUpperBound instanceof TypeVariable
+            && Objects.equal(parentRelationship, TypeRelationship.EQUAL)
+            && to instanceof WildcardType
+            && ((WildcardType) to).getLowerBounds().length == 0) {
+          TypeVariable<?> fromTypeVariable = (TypeVariable<?>) fromUpperBound;
+          WildcardType toWildcardType = (WildcardType) to;
+          for (Type toUpperBound : toWildcardType.getUpperBounds()) {
+            populateTypeMappings(fromTypeVariable, toUpperBound, TypeRelationship.SUBTYPE);
+          }
+        } else {
           populateTypeMappings(fromUpperBound, to, TypeRelationship.SUBTYPE);
-        }
-        return;
-      }
-      for (Type fromLowerBound : fromLowerBounds) {
-        for (Type toLowerBound : toLowerBounds) {
-          populateTypeMappings(fromLowerBound, toLowerBound, TypeRelationship.SUPERTYPE);
-        }
-      }
-      for (Type fromUpperBound : fromUpperBounds) {
-        for (Type toUpperBound : toUpperBounds) {
-          populateTypeMappings(fromUpperBound, toUpperBound, TypeRelationship.SUBTYPE);
         }
       }
     }
@@ -1162,11 +1197,11 @@ public final class TypeResolver {
       if (to instanceof WildcardType) {
         WildcardType toWildcardType = (WildcardType) to;
         for (Type toLowerBound : toWildcardType.getLowerBounds()) {
-          populateTypeMappings(fromParameterizedType, toLowerBound, TypeRelationship.SUBTYPE);
+          populateTypeMappings(fromParameterizedType, toLowerBound, TypeRelationship.SUPERTYPE);
         }
         for (Type toUpperBound : toWildcardType.getUpperBounds()) {
           if (!toUpperBound.equals(Object.class)) {
-            populateTypeMappings(fromParameterizedType, toUpperBound, TypeRelationship.SUPERTYPE);
+            populateTypeMappings(fromParameterizedType, toUpperBound, TypeRelationship.SUBTYPE);
           }
         }
         return; // Okay to say Foo<A> is <?>
@@ -1202,6 +1237,18 @@ public final class TypeResolver {
       for (int i = 0; i < fromArgs.length; i++) {
         Type fromArg = fromArgs[i];
         Type toArg = toArgs[i];
+        if (fromArg instanceof WildcardType && toArg instanceof WildcardType) {
+          checkArgument(
+              ((WildcardType) fromArg).getLowerBounds().length == 0
+                  || ((WildcardType) toArg).getLowerBounds().length > 0,
+              "%s not compatible with %s because parameter %s at index %s "
+                  + "is not compatible with argument %s",
+              fromParameterizedType.getTypeName(),
+              to.getTypeName(),
+              fromArg.getTypeName(),
+              i,
+              toArg.getTypeName());
+        }
         // FIXME: These two checks are incompatible with preexisting behavior such as this:
         //        https://github.com/google/guava/commit/7a3389afb9f97fe846c69e46d106ac1dbf59f51d
         //        But they seem important when resolving method type parameters from arguments.
@@ -1232,9 +1279,11 @@ public final class TypeResolver {
               i,
               toArg.getTypeName());
         }
-        TypeRelationship argRelationship =
-            isForLeastUpperBound ? TypeRelationship.SUBTYPE : TypeRelationship.EQUAL;
-        populateTypeMappings(fromArg, toArg, argRelationship);
+        populateTypeMappings(
+            fromArg,
+            toArg,
+            isForLeastUpperBound ? TypeRelationship.SUBTYPE : TypeRelationship.EQUAL,
+            relationship);
       }
     }
 
@@ -1242,14 +1291,17 @@ public final class TypeResolver {
       if (to instanceof WildcardType) {
         WildcardType toWildcardType = (WildcardType) to;
         for (Type toLowerBound : toWildcardType.getLowerBounds()) {
-          populateTypeMappings(fromArrayType, toLowerBound, TypeRelationship.SUBTYPE);
+          populateTypeMappings(fromArrayType, toLowerBound, TypeRelationship.SUPERTYPE);
         }
         for (Type toUpperBound : toWildcardType.getUpperBounds()) {
           if (!toUpperBound.equals(Object.class)) {
-            populateTypeMappings(fromArrayType, toUpperBound, TypeRelationship.SUPERTYPE);
+            populateTypeMappings(fromArrayType, toUpperBound, TypeRelationship.SUBTYPE);
           }
         }
         return; // Okay to say A[] is <?>
+      }
+      if (to.equals(Object.class)) {
+        return; // Okay to say A[] is an Object
       }
       Type componentType = Types.getComponentType(to);
       checkArgument(componentType != null, "%s is not an array type.", to);
@@ -1364,21 +1416,7 @@ public final class TypeResolver {
     if (types.size() == 1) {
       return types.iterator().next();
     }
-    if (true) {
-      // TODO: This is generally preferred, but it runs into issues with our wildcard-to-wildcard
-      //       TypeMappingsBuilder implementation.  That implementation has other issues, so once we
-      //       fix those, try re-enabling this block again and see if things work.
-      return new Types.WildcardTypeImpl(new Type[0], types.toArray(new Type[0]));
-    }
-    Type[] bounds = types.toArray(new Type[0]);
-    StringBuilder name = new StringBuilder(bounds[0].getTypeName());
-    for (int i = 1; i < bounds.length; i++) {
-      name.append(" & ").append(bounds[i].getTypeName());
-    }
-    return Types.newArtificialTypeVariable(
-        TypeResolver.class,
-        name.toString(),
-        bounds);
+    return new Types.WildcardTypeImpl(new Type[0], types.toArray(new Type[0]));
   }
 
   /**
@@ -1520,6 +1558,61 @@ public final class TypeResolver {
     } else {
       return clazz;
     }
+  }
+
+  /**
+   * Returns {@code true} if {@code a} is a subtype of {@code b} or if either {@code a} or {@code b}
+   * contain any type variables.
+   */
+  private static boolean isSubtypeOrUndetermined(Type a, Type b) {
+    return isSubtype(a, b)
+        || containsTypeVariables(a)
+        || containsTypeVariables(b);
+  }
+
+  /**
+   * Returns {@code true} if {@code a} intersects {@code b} or if either {@code a} or {@code b}
+   * contain any type variables.
+   */
+  private static boolean intersectingOrUndetermined(Type a, Type b) {
+    return intersecting(a, b)
+        || containsTypeVariables(a)
+        || containsTypeVariables(b);
+  }
+
+  /** Returns {@code true} if the specified type contains any type variables. */
+  private static boolean containsTypeVariables(Type type) {
+    checkNotNull(type);
+    if (type instanceof TypeVariable) {
+      return true;
+    }
+    if (type instanceof WildcardType) {
+      WildcardType wildcardType = (WildcardType) type;
+      return containsTypeVariables(wildcardType.getLowerBounds())
+          || containsTypeVariables(wildcardType.getUpperBounds());
+    }
+    if (type instanceof ParameterizedType) {
+      ParameterizedType parameterizedType = (ParameterizedType) type;
+      Type ownerType = parameterizedType.getOwnerType();
+      return (ownerType != null && containsTypeVariables(ownerType))
+          || containsTypeVariables(parameterizedType.getActualTypeArguments());
+    }
+    if (type instanceof GenericArrayType) {
+      GenericArrayType arrayType = (GenericArrayType) type;
+      return containsTypeVariables(arrayType.getGenericComponentType());
+    }
+    return false;
+  }
+
+  /** Returns {@code true} if any of the specified types contain any type variables. */
+  private static boolean containsTypeVariables(Type[] types) {
+    checkNotNull(types);
+    for (Type type : types) {
+      if (containsTypeVariables(type)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Returns {@code true} if {@code a} is a subtype of {@code b}. */

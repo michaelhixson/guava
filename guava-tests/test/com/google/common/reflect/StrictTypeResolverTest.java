@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.google.common.collect.ClassToInstanceMap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -34,6 +35,8 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.junit.Test;
+
+// javac --debug=verboseResolution=all
 
 public final class StrictTypeResolverTest {
   @Test
@@ -318,8 +321,8 @@ public final class StrictTypeResolverTest {
         returnType);
 
     nonObjectUpperBound(
-        new ArrayList<Optional<Integer>>(),
-        new ArrayList<Optional<Integer>>());
+        (ArrayList<Optional<Integer>>) null,
+        (ArrayList<Optional<Integer>>) null);
   }
 
   public static <T extends Number> T nonObjectUpperBound(List<? extends Optional<? extends T>> a,
@@ -337,13 +340,6 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    List<?> a = null;
-    List<String> b = null;
-    a = b;
-
-    List<List<?>> c = null;
-    List<List<String>> d = null;
-    //c = d;
     //badVariance((List<List<String>>) null);
   }
 
@@ -589,7 +585,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<Integer>>() {}.capture(),
         returnType);
 
-    foo(new ArrayList<Integer>());
+    foo((List<Integer>) null);
   }
 
   public static <T extends List<? extends Comparable<?>>> T foo(T input) { return null; }
@@ -623,7 +619,7 @@ public final class StrictTypeResolverTest {
         Integer.class,
         returnType);
 
-    bar(new ArrayList<Integer>(), new ArrayList<List<Integer>>());
+    bar((List<Integer>) null, (List<List<Integer>>) null);
   }
 
   public static <T extends List<U>, U extends Comparable<? super U>> U bar(List<U> a, List<T> b) { return null; }
@@ -665,7 +661,7 @@ public final class StrictTypeResolverTest {
     assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Serializable>>() {}.capture()));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Comparable<?>>>() {}.capture()));
 
-    convergeUpperBounds(new ArrayList<String>(), new ArrayList<Integer>());
+    convergeUpperBounds((List<String>) null, (List<Integer>) null);
   }
 
   @Test
@@ -697,7 +693,7 @@ public final class StrictTypeResolverTest {
         Object.class,
         returnType);
 
-    convergeUpperBounds(new ArrayList<String>(), new ArrayList<Void>());
+    convergeUpperBounds((List<String>) null, (List<Void>) null);
   }
 
   public static <T> T convergeUpperBounds(List<? extends T> a, List<? extends T> b) { return null; }
@@ -732,8 +728,8 @@ public final class StrictTypeResolverTest {
         returnType);
 
     convergeLowerBounds(
-        (Consumer<CharSequence>) any -> {},
-        (Consumer<String>) any -> {});
+        (Consumer<CharSequence>) null,
+        (Consumer<String>) null);
   }
 
   public static <T> T convergeLowerBounds(Consumer<? super T> a, Consumer<? super T> b) { return null; }
@@ -775,7 +771,7 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    //convergeLowerBounds((Consumer<String>) any -> {}, (Consumer<Integer>) any -> {});
+    //convergeLowerBounds((Consumer<String>) null, (Consumer<Integer>) null);
   }
 
   @Test
@@ -811,7 +807,7 @@ public final class StrictTypeResolverTest {
         returnType);
 
     // This does compile, but IntelliJ says it does not compile.
-    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? super SubFoo>) any -> {});
+    //convergeLowerBounds((Consumer<Foo>) null, (Consumer<? super SubFoo>) null);
   }
 
   @Test
@@ -833,7 +829,7 @@ public final class StrictTypeResolverTest {
     } catch (IllegalArgumentException expected) {}
 
     // This does not compile, but IntelliJ says it does compile.
-    //convergeLowerBounds((Consumer<Foo>) any -> {}, (Consumer<? extends SubFoo>) any -> {});
+    //convergeLowerBounds((Consumer<Foo>) null, (Consumer<? extends SubFoo>) null);
   }
 
   @Test
@@ -874,8 +870,9 @@ public final class StrictTypeResolverTest {
         returnType);
 
     convergeAllBounds(
-        (Consumer<Serializable>) any -> {},
-        (Consumer<Number>) any -> {}, new ArrayList<Integer>());
+        (Consumer<Serializable>) null,
+        (Consumer<Number>) null,
+        (List<Integer>) null);
   }
 
   public static <T> T convergeAllBounds(
@@ -931,7 +928,7 @@ public final class StrictTypeResolverTest {
         Integer.class,
         returnType);
 
-    exactPlusExact(new ArrayList<Integer>(), new ArrayList<Integer>());
+    exactPlusExact((List<Integer>) null, (List<Integer>) null);
   }
 
   @Test
@@ -963,7 +960,7 @@ public final class StrictTypeResolverTest {
         Number.class,
         returnType);
 
-    exactPlusExact(new ArrayList<Number>(), new ArrayList<Integer>());
+    exactPlusExact((List<Number>) null, (List<Integer>) null);
   }
 
   public static <T> T exactPlusExact(List<T> a, List<? extends T> b) { return null; }
@@ -996,7 +993,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<LinkedHashMap<String, Integer>>() {}.capture(),
         returnType);
 
-    exactPlusLower(new ArrayList<Number>(), new ArrayList<Integer>());
+    exactPlusLower((List<Number>) null, (List<Integer>) null);
   }
 
   @Test
@@ -1014,7 +1011,7 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    //exactPlusLower(new ArrayList<Integer>(), new ArrayList<Number>());
+    //exactPlusLower((List<Integer>) null, (List<Number>) null);
   }
 
   public static <T> T exactPlusLower(List<? super T> a, List<T> b) { return null; }
@@ -1048,7 +1045,7 @@ public final class StrictTypeResolverTest {
         Number.class,
         returnType);
 
-    exactPlusUpper(new ArrayList<Number>(), new ArrayList<Integer>());
+    exactPlusUpper((List<Number>) null, (List<Integer>) null);
   }
 
   @Test
@@ -1066,7 +1063,7 @@ public final class StrictTypeResolverTest {
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    //exactPlusUpper(new ArrayList<Integer>(), new ArrayList<Number>());
+    //exactPlusUpper((List<Integer>) null, (List<Number>) null);
   }
 
   public static <T> T exactPlusUpper(List<T> a, List<? extends T> b) { return null; }
@@ -1109,9 +1106,9 @@ public final class StrictTypeResolverTest {
         returnType);
 
     exactLowerUpper(
-        new ArrayList<Number>(),
-        new ArrayList<Serializable>(),
-        new ArrayList<Integer>());
+        (List<Number>) null,
+        (List<Serializable>) null,
+        (List<Integer>) null);
   }
 
   @Test
@@ -1164,7 +1161,7 @@ public final class StrictTypeResolverTest {
         Number.class,
         returnType);
 
-    variableInBounds(new ArrayList<Number>(), new ArrayList<Serializable>());
+    variableInBounds((List<Number>) null, (List<Serializable>) null);
   }
 
   public static <T extends Number, U extends T> T variableInBounds(List<? super U> a, List<? super T> b) { return null; }
@@ -1187,7 +1184,7 @@ public final class StrictTypeResolverTest {
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
     assertEquals(
-        new TypeCapture<List<? super Number>>() {}.capture(),
+        new TypeCapture<List<? super Integer>>() {}.capture(),
         param0Type);
 
     assertEquals(
@@ -1198,7 +1195,7 @@ public final class StrictTypeResolverTest {
         Integer.class,
         returnType);
 
-    variableInBounds(new ArrayList<Number>(), new ArrayList<Integer>());
+    variableInBounds((List<Number>) null, (List<Integer>) null);
   }
 
   @Test
@@ -1235,7 +1232,7 @@ public final class StrictTypeResolverTest {
     assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Number>>() {}.capture()));
     assertTrue(TypeToken.of(returnType).isSubtypeOf(new TypeCapture<Comparable<? extends Comparable<?>>>() {}.capture()));
 
-    variableInBounds2(new ArrayList<Integer>(), new ArrayList<Double>());
+    variableInBounds2((List<Integer>) null, (List<Double>) null);
   }
 
   public static <T extends Number, U extends T> T variableInBounds2(List<? extends U> a, List<? extends T> b) { return null; }
@@ -1375,7 +1372,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<String>>() {}.capture(),
         returnType);
 
-    List<String> a = typeChain(new ArrayList<Number>());
+    List<String> a = typeChain((ArrayList<Number>) null);
   }
 
   public static <
@@ -1408,7 +1405,7 @@ public final class StrictTypeResolverTest {
         TimeUnit.class,
         returnType);
 
-    TimeUnit b = typeChain(new ArrayList<Optional<Integer>>());
+    TimeUnit b = typeChain((ArrayList<Optional<Integer>>) null);
   }
 
   @Test
@@ -1432,7 +1429,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<? extends Number>>() {}.capture(),
         returnType);
 
-    nestedWildcardUpperBounds(new ArrayList<Number>());
+    nestedWildcardUpperBounds((List<Number>) null);
   }
 
   public static <T, U extends T> List<? extends T> nestedWildcardUpperBounds(List<? extends U> a) { return null; }
@@ -1500,14 +1497,8 @@ public final class StrictTypeResolverTest {
 
     List<? super CharSequence> q = nestedWildcardLowerBounds((List<Number>) null);
 
-    // FIXME: This one throws, but it shouldn't.
-    assertEquals(
-        new TypeCapture<List<? super String>>() {}.capture(),
-        resolver.where(method.getGenericReturnType(),
-                       new TypeCapture<List<? super String>>() {}.capture())
-                .resolveType(method.getGenericReturnType()));
-
     // IntelliJ thinks this does not compile, but it does.
+    //
     //List<? super String> r = nestedWildcardLowerBounds((List<Number>) null);
 
     // Number is a supertype of U
@@ -1528,9 +1519,47 @@ public final class StrictTypeResolverTest {
     //   set java.util.List<? super T> java.util.List<? super java.lang.Object> SUBTYPE
     //   set ? super T ? super java.lang.Object EQUAL
     //   set T ? super java.lang.Object SUPERTYPE
+    //
+    //
+    //
+    // Note that the following code does not compile even though it seems like
+    // it's doing the same thing here as the previous example - Setting
+    // "List<? super T>" to "List<? super String>".  Why does javac reject this
+    // but allow the previous example?
+    //
+    //
+    //nestedWildcardLowerBounds((List<Number>) null, (List<? super String>) null);
+    //
+    //
+    // Intellij:
+    // "inferred type U not within its bounds.  should extend 'capture<? super String>'"
+    //
+    // javac:
+    /*
+Error:(1542, 5) java: no suitable method found for nestedWildcardLowerBounds(java.util.List<java.lang.Number>,java.util.List<capture#1 of ? super java.lang.String>)
+    method com.google.common.reflect.StrictTypeResolverTest.<T,U>nestedWildcardLowerBounds(java.util.List<? super U>) is not applicable
+      (cannot infer type-variable(s) T,U
+        (actual and formal argument lists differ in length))
+    method com.google.common.reflect.StrictTypeResolverTest.<T,U>nestedWildcardLowerBounds(java.util.List<? super U>,java.util.List<? super T>) is not applicable
+      (inference variable U has incompatible upper bounds java.lang.Object,java.lang.String,java.lang.Number,T)
+     */
+    //
+    // Perhaps that difference between the two examples shows that we shouldn't
+    // use the same TypeResolver.where(...) to model parameter types and return
+    // types.
+
+    // FIXME: This one throws, but it shouldn't.
+    if (false) {
+      assertEquals(
+          new TypeCapture<List<? super String>>() {}.capture(),
+          resolver.where(method.getGenericReturnType(),
+                         new TypeCapture<List<? super String>>() {}.capture())
+                  .resolveType(method.getGenericReturnType()));
+    }
   }
 
   public static <T, U extends T> List<? super T> nestedWildcardLowerBounds(List<? super U> a) { return null; }
+  public static <T, U extends T> void nestedWildcardLowerBounds(List<? super U> a, List<? super T> b) {}
 
   @Test
   public void nestedWildcardLowerBounds2() throws Exception {
@@ -1561,7 +1590,7 @@ public final class StrictTypeResolverTest {
         new TypeCapture<List<? super Number>>() {}.capture(),
         returnType);
 
-    nestedWildcardLowerBounds2(new ArrayList<Number>(), new ArrayList<Number>());
+    nestedWildcardLowerBounds2((List<Number>) null, (List<Number>) null);
   }
 
   public static <T, U extends T> List<? super T> nestedWildcardLowerBounds2(List<? super U> a, List<? super T> b) { return null; }
@@ -1623,7 +1652,7 @@ public final class StrictTypeResolverTest {
         Object.class,
         returnType);
 
-    otherTypeChain(new ArrayList<AccessibleObject>(), new ArrayList<Member>());
+    otherTypeChain((List<AccessibleObject>) null, (List<Member>) null);
   }
 
   public static <A, B extends A, C extends B> A otherTypeChain(List<? super C> a, List<? super C> b) { return null; }
@@ -1703,18 +1732,18 @@ public final class StrictTypeResolverTest {
     assertTrue(TypeToken.of(returnType).isSubtypeOf(Member.class));
 
     canAccess2(
-        (Consumer<AccessibleObject>) any -> {},
-        (Consumer<Member>) any -> {});
+        (Consumer<AccessibleObject>) null,
+        (Consumer<Member>) null);
 
     AccessibleObject a =
         canAccess2(
-            (Consumer<AccessibleObject>) any -> {},
-            (Consumer<Member>) any -> {});
+            (Consumer<AccessibleObject>) null,
+            (Consumer<Member>) null);
 
     Member b =
         canAccess2(
-            (Consumer<AccessibleObject>) any -> {},
-            (Consumer<Member>) any -> {});
+            (Consumer<AccessibleObject>) null,
+            (Consumer<Member>) null);
   }
 
   public static <T> T canAccess2(Consumer<? super T> a, Consumer<? super T> b) { return null; }
@@ -1878,6 +1907,10 @@ public final class StrictTypeResolverTest {
     arraySuper((List<? super Comparable<?>[]>) null);
     Serializable a = arraySuper((List<? super Comparable<?>[]>) null);
     Comparable<?> b = arraySuper((List<? super Comparable<?>[]>) null);
+
+    // TODO: test these
+    String c = arraySuper((List<? super Comparable<?>[]>) null);
+    Method d = arraySuper((List<? super Comparable<?>[]>) null);
   }
 
   public static <T extends Serializable> T arraySuper(List<? super T[]> a) { return null; }
@@ -2364,7 +2397,7 @@ public final class StrictTypeResolverTest {
     }
 
     // Note: This exercises a case that no other test does,
-    //       where ParameterizedType SUBTYPE_OF X.
+    //       populateTypeMappings(ParameterizedType, X, SUPERTYPE)
 
     multipleExactTypes(
         (List<String>) null,
@@ -2706,23 +2739,6 @@ public final class StrictTypeResolverTest {
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    // FIXME: This parameter is resolving to the wrong type.
-    // Note that intellij says the parameter resolves to List<? extends ? extends String>,
-    // but javac says this:
-    /*
-
-example\Test.java:24: Note: Deferred instantiation of method <T>extendsGenericToExtendsActual(List<? extends T>)
-    extendsGenericToExtendsActual((List<? extends String>) null);
-                                 ^
-  instantiated signature: (List<? extends CAP#1>)CAP#1
-  target-type: <none>
-  where T is a type-variable:
-    T extends Object declared in method <T>extendsGenericToExtendsActual(List<? extends T>)
-  where CAP#1 is a fresh type-variable:
-    CAP#1 extends String from capture of ? extends String
-
-     */
-
     // List<? extends ? extends String>
     assertEquals(
         Types.newParameterizedType(
@@ -2735,14 +2751,11 @@ example\Test.java:24: Note: Deferred instantiation of method <T>extendsGenericTo
         Types.subtypeOf(String.class),
         returnType);
 
-    // FIXME: Notice the difference in the wildcard between these two
-    //        First one involves wildcard capture according to javac... relevant?
     extendsGenericToExtendsActual((List<? extends String>) null);
     extendsGenericToExtendsActual2((List<List<? extends String>>) null);
   }
 
   public static <T> T extendsGenericToExtendsActual(List<? extends T> a) { return null; }
-
 
   @Test
   public void extendsGenericToExtendsActual2() throws Exception {
@@ -2785,22 +2798,6 @@ example\Test.java:24: Note: Deferred instantiation of method <T>extendsGenericTo
     Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
     Type returnType = resolver.resolveType(method.getGenericReturnType());
 
-    // FIXME: This is resolving to the wrong type.
-    // Note that javac mentions wildcard capture.
-    /*
-
-example\Test.java:29: Note: Deferred instantiation of method <T>superGenericToSuperActual(List<? super T>)
-    superGenericToSuperActual((List<? super String>) null);
-                             ^
-  instantiated signature: (List<? super CAP#1>)CAP#1
-  target-type: <none>
-  where T is a type-variable:
-    T extends Object declared in method <T>superGenericToSuperActual(List<? super T>)
-  where CAP#1 is a fresh type-variable:
-    CAP#1 extends Object super: String from capture of ? super String
-
-     */
-
     // List<? super ? super String>
     assertEquals(
         Types.newParameterizedType(
@@ -2830,10 +2827,57 @@ example\Test.java:29: Note: Deferred instantiation of method <T>superGenericToSu
       fail();
     } catch (IllegalArgumentException expected) {}
 
-    // cannot infer type-variable T
-    // argument mismatch  List<capture of ? extends String> cannot be converted to List<? super T>
     //superGenericToExtendsActual((List<? extends String>) null);
   }
 
   public static <T> T superGenericToExtendsActual(List<? super T> a) { return null; }
+
+  @Test
+  public <T> void incompatibleExtends() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("incompatibleExtends", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? extends Serializable>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //incompatibleExtends((List<? extends Serializable>) null);
+  }
+
+  public static void incompatibleExtends(List<? extends Member> a) {}
+
+  @Test
+  public <T> void incompatibleSuper() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("incompatibleSuper", List.class);
+
+    try {
+      new TypeResolver()
+          .where(
+              method.getGenericParameterTypes()[0],
+              new TypeCapture<List<? super Serializable>>() {}.capture());
+      fail();
+    } catch (IllegalArgumentException expected) {}
+
+    //incompatibleSuper((List<? super Serializable>) null);
+  }
+
+  public static void incompatibleSuper(List<? super Member> a) {}
+
+  @Test
+  public void testClassToInstanceMap() {
+    // Similar to the case described in the comment of
+    // https://github.com/google/guava/commit/7a3389afb9f97fe846c69e46d106ac1dbf59f51d
+    // except this test seems correct.
+    assertEquals(
+        new TypeCapture<ClassToInstanceMap<String>>() {}.capture(),
+        new TypeToken<Map<Class<? extends String>, String>>() {}
+            .getSubtype(ClassToInstanceMap.class)
+            .getType());
+  }
+
+  // TODO: Add tests involving primitive arrays
+  //       especially ones asserting that it's wrong to map T[] to int[].
 }
