@@ -532,6 +532,10 @@ public final class TypeResolver {
     private @Nullable Set<Type> supertypes;
     private @Nullable Set<Type> subtypes;
 
+    TypeVariableConstraints(TypeVariableKey key) {
+      this.key = checkNotNull(key);
+    }
+
     @Override
     public String toString() {
       return MoreObjects
@@ -543,10 +547,6 @@ public final class TypeResolver {
           .add("supertypes", supertypes)
           .add("subtypes", subtypes)
           .toString();
-    }
-
-    TypeVariableConstraints(TypeVariableKey key) {
-      this.key = checkNotNull(key);
     }
 
     /**
@@ -694,9 +694,25 @@ public final class TypeResolver {
         }
       }
       if (constraints.supertypes != null) {
+        // This logic to flatten lower-bounded wildcards when combining
+        // constraints feels like a hack.  It's probably wrong.  If it later
+        // turns out that this logic causes tests to fail, then don't feel bad
+        // about removing this logic.
+        if (this.supertypes != null) {
+          Set<Type> oldSupertypes = new LinkedHashSet<>(this.supertypes);
+          this.supertypes.clear();
+          for (Type supertype : oldSupertypes) {
+            if (supertype instanceof WildcardType
+                && ((WildcardType) supertype).getLowerBounds().length > 0) {
+              for (Type lowerBound : ((WildcardType) supertype).getLowerBounds()) {
+                addSupertype(lowerBound);
+              }
+            } else {
+              addSupertype(supertype);
+            }
+          }
+        }
         for (Type supertype : constraints.supertypes) {
-          // This feels like a hack and is probably wrong.  If it later turns out that this block
-          // causes tests to fail, then don't feel bad about deleting this.
           if (!isEmpty()
               && supertype instanceof WildcardType
               && ((WildcardType) supertype).getLowerBounds().length > 0) {
@@ -1313,7 +1329,7 @@ public final class TypeResolver {
         WildcardType toWildcardType = (WildcardType) to;
         for (Type toLowerBound : toWildcardType.getLowerBounds()) {
           checkArgument(
-              intersecting(fromClass, toLowerBound),
+              isSubtype(toLowerBound, fromClass),
               "Type %s is incompatible with lower bound %s of wildcard type %s",
               fromClass.getTypeName(),
               toLowerBound.getTypeName(),

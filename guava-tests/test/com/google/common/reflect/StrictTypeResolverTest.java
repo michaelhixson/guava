@@ -811,6 +811,42 @@ public final class StrictTypeResolverTest {
   }
 
   @Test
+  public void convergeLowerBoundsFoo1b() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("convergeLowerBounds", Consumer.class, Consumer.class);
+
+    class Foo {}
+    class SubFoo extends Foo {}
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[1],
+                new TypeCapture<Consumer<? super SubFoo>>() {}.capture())
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<Consumer<Foo>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type param1Type = resolver.resolveType(method.getGenericParameterTypes()[1]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    assertEquals(
+        new TypeCapture<Consumer<? super SubFoo>>() {}.capture(),
+        param0Type);
+
+    assertEquals(
+        new TypeCapture<Consumer<? super SubFoo>>() {}.capture(),
+        param1Type);
+
+    assertEquals(
+        SubFoo.class,
+        returnType);
+
+    // This does compile, but IntelliJ says it does not compile.
+    //convergeLowerBounds((Consumer<Foo>) null, (Consumer<? super SubFoo>) null);
+  }
+
+  @Test
   public void convergeLowerBoundsFoo2() throws Exception {
     Method method = StrictTypeResolverTest.class.getMethod("convergeLowerBounds", Consumer.class, Consumer.class);
 
@@ -2814,6 +2850,36 @@ Error:(1542, 5) java: no suitable method found for nestedWildcardLowerBounds(jav
   }
 
   public static <T> T superGenericToSuperActual(List<? super T> a) { return null; }
+
+  @Test
+  public void superGenericToSuperActual2() throws Exception {
+    Method method = StrictTypeResolverTest.class.getMethod("superGenericToSuperActual2", List.class);
+
+    TypeResolver resolver =
+        new TypeResolver()
+            .where(
+                method.getGenericParameterTypes()[0],
+                new TypeCapture<List<? super String>>() {}.capture());
+
+    Type param0Type = resolver.resolveType(method.getGenericParameterTypes()[0]);
+    Type returnType = resolver.resolveType(method.getGenericReturnType());
+
+    // List<? super ? super String>
+    assertEquals(
+        Types.newParameterizedType(
+            List.class,
+            Types.supertypeOf(Types.supertypeOf(String.class))),
+        param0Type);
+
+    // ? super String
+    assertEquals(
+        Types.supertypeOf(String.class),
+        returnType);
+
+    superGenericToSuperActual2((List<? super String>) null);
+  }
+
+  public static <T, U extends T> U superGenericToSuperActual2(List<? super U> a) { return null; }
 
   @Test
   public void superGenericToExtendsActual() throws Exception {
